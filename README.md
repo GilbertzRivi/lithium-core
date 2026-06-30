@@ -1,7 +1,6 @@
 # lithium_core
 
-Post-quantum **hybrid** cryptography and at-rest key management, extracted from the
-[Lithium](../README.md) messenger as a standalone Rust library.
+Post-quantum **hybrid** cryptography and at-rest key management as a standalone Rust library.
 
 Every construction combines a classical and a post-quantum primitive, so it stays secure as long
 as *either* one holds:
@@ -23,9 +22,9 @@ rotation and rewrap. Secret types (`Byte32`, `SecretBytes`, `MasterKey32`, …) 
 
 ### 2. Hybrid encryption (`crypto`)
 
-`crypto::kyberbox` is the X25519 + ML-KEM-1024 AEAD construction: the KEM encapsulates a fresh
-seed per message that is mixed with the ECDH output through HKDF, so recovering the message key
-requires breaking *both* branches. See [`docs/combiner.md`](docs/combiner.md) for the exact
+`crypto::kyberbox` is the X25519 + ML-KEM-1024 AEAD construction: the KEM produces a fresh
+shared secret per message that is combined with the X25519 output through HKDF, so recovering the
+message key requires breaking *both* branches. See [`docs/combiner.md`](docs/combiner.md) for the exact
 construction and its rationale, and [`docs/kyberbox.md`](docs/kyberbox.md) for the wire format.
 
 ## Helpers
@@ -37,8 +36,8 @@ export-key DEK wrapping), `pow` (proof-of-work), `passwords` (policy + DEK gener
 ## Examples
 
 ```bash
-cargo run -p lithium_core --example kyberbox   # hybrid encrypt/decrypt round-trip
-cargo run -p lithium_core --example keyfile    # KeyManager identity persistence
+cargo run --example kyberbox   # hybrid encrypt/decrypt round-trip
+cargo run --example keyfile    # KeyManager identity persistence
 ```
 
 ```rust
@@ -65,6 +64,13 @@ let (body, headers) =
 questions for an auditor are documented under [`docs/`](docs/index.md): `combiner.md`, `kyberbox.md`,
 `threat-model.md`. The public API is intended to be frozen at `0.1` through the audit.
 
+To report a vulnerability, see [`SECURITY.md`](SECURITY.md).
+
+## Contributing
+
+Contributions are accepted under AGPL-3.0-only with a grant for commercial relicensing, and
+require a DCO sign-off — see [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
 ## License
 
-GNU AGPL-3.0-only, with a commercial license available (dual licensing) — see [`LICENSE`](../LICENSE).
+GNU AGPL-3.0-only, with a commercial license available (dual licensing) — see [`LICENSE`](LICENSE).
