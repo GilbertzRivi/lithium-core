@@ -5,12 +5,12 @@ Post-quantum **hybrid** cryptography and at-rest key management as a standalone 
 Every construction combines a classical and a post-quantum primitive, so it stays secure as long
 as *either* one holds:
 
-- **Encryption** — X25519 + ML-KEM-1024, sealed with AES-256-GCM-SIV (`crypto::kyberbox`)
-- **Signatures** — Ed25519 + ML-DSA-87, dual-signed (`crypto::sign`)
-- **KDF / passwords** — HKDF-SHA256, Argon2
+- **Encryption** - X25519 + ML-KEM-1024, sealed with AES-256-GCM-SIV (`crypto::kyberbox`)
+- **Signatures** - Ed25519 + ML-DSA-87, dual-signed (`crypto::sign`)
+- **KDF / passwords** - HKDF-SHA256, Argon2
 
 The crate is `#![forbid(unsafe_code)]`, secret types zeroize on drop, and all domain-separation
-labels are supplied by the caller — the crypto itself is application-agnostic.
+labels are supplied by the caller - the crypto itself is application-agnostic.
 
 ## Two pillars
 
@@ -18,7 +18,7 @@ labels are supplied by the caller — the crypto itself is application-agnostic.
 
 `KeyManager` owns an on-disk keyfile: it generates the hybrid identity, seals private keys under
 a master key from a pluggable `MkProvider` (plain file or TPM), and performs crash-safe hourly
-rotation and rewrap. Secret types (`Byte32`, `SecretBytes`, `MasterKey32`, …) zeroize on drop.
+rotation and rewrap. Secret types (`Byte32`, `SecretBytes`, `MasterKey32`, ...) zeroize on drop.
 
 ### 2. Hybrid encryption (`crypto`)
 
@@ -69,8 +69,8 @@ To report a vulnerability, see [`SECURITY.md`](SECURITY.md).
 ## Contributing
 
 Contributions are accepted under AGPL-3.0-only with a grant for commercial relicensing, and
-require a DCO sign-off — see [`CONTRIBUTING.md`](CONTRIBUTING.md).
+require a DCO sign-off - see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## License
 
-GNU AGPL-3.0-only, with a commercial license available (dual licensing) — see [`LICENSE`](LICENSE).
+GNU AGPL-3.0-only, with a commercial license available (dual licensing) - see [`LICENSE`](LICENSE).

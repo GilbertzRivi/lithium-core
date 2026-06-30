@@ -127,7 +127,7 @@ async fn store_peek_does_not_remove() {
 #[tokio::test]
 async fn store_expired_entry_not_returned_by_take() {
     let store = EphemeralStoreManager::new().unwrap();
-    // TTL of 1 ms — will expire immediately
+    // TTL of 1 ms - will expire immediately
     store
         .set("exp", &sb(b"gone"), Duration::from_millis(1))
         .await

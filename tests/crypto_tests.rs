@@ -947,7 +947,7 @@ fn kyberbox_corrupt_enc_headers_tag_fails() {
 
 #[test]
 fn kyberbox_swapped_body_and_headers_fails() {
-    // body and headers are encrypted with different derived keys and different AADs —
+    // body and headers are encrypted with different derived keys and different AADs -
     // swapping them must fail on both slots.
     let (alice_x_sk, alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
@@ -1026,7 +1026,7 @@ fn kyberbox_roundtrip_various_payload_sizes() {
 
 #[test]
 fn cross_kdf_then_aead_roundtrip() {
-    // Derive a key via KDF, then use it for AEAD — the two modules compose correctly.
+    // Derive a key via KDF, then use it for AEAD - the two modules compose correctly.
     let master = sb(b"master-key-material-for-cross-test");
     let aead_key = kdf::derive32(&master, None, &sb(b"aead-key/v1")).unwrap();
 

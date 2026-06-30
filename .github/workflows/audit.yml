@@ -1,0 +1,31 @@
+name: security-audit
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+      - "deny.toml"
+      - ".github/workflows/audit.yml"
+  pull_request:
+    paths:
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+      - "deny.toml"
+      - ".github/workflows/audit.yml"
+  schedule:
+    - cron: "0 6 * * 1"
+
+jobs:
+  # cargo-deny walks the real dependency graph (feature- and target-aware), so it
+  # only flags advisories in crates actually compiled in, and adds the bans and
+  # sources checks. Accepted advisories (the archived PQClean crates) are listed
+  # with reasons in deny.toml.
+  cargo-deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories bans sources
