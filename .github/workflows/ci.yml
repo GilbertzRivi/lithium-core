@@ -61,17 +61,21 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: x86_64-unknown-linux-gnu
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: fuzz
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-fuzz
+      # Pin the gnu target: the sanitizer cargo-fuzz injects cannot link against
+      # musl's static libc, and the runner otherwise defaults the build to musl.
       - name: Smoke-run each target
         run: |
           for t in keyfile_parse secret_json opaque_parse kyberbox_decrypt \
                    aead_decrypt sign_verify pow_verify; do
             echo "::group::$t"
-            cargo +nightly fuzz run "$t" -- -runs=20000 -max_total_time=20
+            cargo +nightly fuzz run "$t" --target x86_64-unknown-linux-gnu -- -runs=20000 -max_total_time=20
             echo "::endgroup::"
           done
