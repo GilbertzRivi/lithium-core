@@ -26,8 +26,7 @@ fuzz_target!(|data: &[u8]| {
     let (a, b) = (n / 3, 2 * n / 3);
     let wire = WirePayload {
         kem_ct: SecretBytes::from_slice(&data[..a]),
-        enc_headers: SecretBytes::from_slice(&data[a..b]),
-        enc_body: SecretBytes::from_slice(&data[b..]),
+        enc_data: SecretBytes::from_slice(&data[a..b])
     };
     let _ = kyberbox::decrypt("fuzz", x_priv, peer_pub_x, k_priv, &wire);
 });
