@@ -365,17 +365,13 @@ fn kyberbox_roundtrip_body_and_headers() {
     let (alice_x_sk, alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
 
-    let body = sb(b"secret message body");
-    let headers = sb(b"secret headers");
+    let body = sb(b"secret message");
     let ctx = "test-context";
 
-    let wire =
-        kyberbox::encrypt(ctx, &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &body, &headers).unwrap();
-    let (dec_body, dec_headers) =
-        kyberbox::decrypt(ctx, &bob_x_sk, &alice_x_pk, &bob_kyber_sk, &wire).unwrap();
+    let wire = kyberbox::encrypt(ctx, &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &body).unwrap();
+    let dec_body = kyberbox::decrypt(ctx, &bob_x_sk, &alice_x_pk, &bob_kyber_sk, &wire).unwrap();
 
     assert_eq!(dec_body.expose_as_slice(), body.expose_as_slice());
-    assert_eq!(dec_headers.expose_as_slice(), headers.expose_as_slice());
 }
 
 #[test]
@@ -383,20 +379,10 @@ fn kyberbox_empty_payload() {
     let (alice_x_sk, alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
 
-    let wire = kyberbox::encrypt(
-        "ctx",
-        &alice_x_sk,
-        &bob_x_pk,
-        &bob_kyber_pk,
-        &sb(b""),
-        &sb(b""),
-    )
-    .unwrap();
-    let (body, headers) =
-        kyberbox::decrypt("ctx", &bob_x_sk, &alice_x_pk, &bob_kyber_sk, &wire).unwrap();
+    let wire = kyberbox::encrypt("ctx", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &sb(b"")).unwrap();
+    let body = kyberbox::decrypt("ctx", &bob_x_sk, &alice_x_pk, &bob_kyber_sk, &wire).unwrap();
 
     assert!(body.expose_as_slice().is_empty());
-    assert!(headers.expose_as_slice().is_empty());
 }
 
 #[test]
@@ -404,15 +390,8 @@ fn kyberbox_wrong_x25519_key_fails() {
     let (alice_x_sk, alice_x_pk, bob_kyber_sk, bob_kyber_pk, _bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
 
-    let wire = kyberbox::encrypt(
-        "ctx",
-        &alice_x_sk,
-        &bob_x_pk,
-        &bob_kyber_pk,
-        &sb(b"data"),
-        &sb(b"hdr"),
-    )
-    .unwrap();
+    let wire =
+        kyberbox::encrypt("ctx", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &sb(b"data")).unwrap();
 
     let (wrong_x_sk, _) = keys::random_x25519_keypair().unwrap();
     let result = kyberbox::decrypt("ctx", &wrong_x_sk, &alice_x_pk, &bob_kyber_sk, &wire);
@@ -424,15 +403,8 @@ fn kyberbox_wrong_kyber_key_fails() {
     let (alice_x_sk, alice_x_pk, _bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
 
-    let wire = kyberbox::encrypt(
-        "ctx",
-        &alice_x_sk,
-        &bob_x_pk,
-        &bob_kyber_pk,
-        &sb(b"data"),
-        &sb(b"hdr"),
-    )
-    .unwrap();
+    let wire =
+        kyberbox::encrypt("ctx", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &sb(b"data")).unwrap();
 
     let (wrong_kyber_sk, _) = keys::random_kyber_mlkem1024_keypair().unwrap();
     let result = kyberbox::decrypt("ctx", &bob_x_sk, &alice_x_pk, &wrong_kyber_sk, &wire);
@@ -450,7 +422,6 @@ fn kyberbox_different_contexts_incompatible() {
         &bob_x_pk,
         &bob_kyber_pk,
         &sb(b"data"),
-        &sb(b"hdr"),
     )
     .unwrap();
     let result = kyberbox::decrypt("context-b", &bob_x_sk, &alice_x_pk, &bob_kyber_sk, &wire);
@@ -462,23 +433,19 @@ fn kyberbox_large_payload() {
     let (alice_x_sk, alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
 
-    let big_body = vec![0xABu8; 16384];
-    let big_headers = vec![0xCDu8; 4096];
+    let big_data = vec![0xABu8; 16384];
 
     let wire = kyberbox::encrypt(
         "large",
         &alice_x_sk,
         &bob_x_pk,
         &bob_kyber_pk,
-        &sb(&big_body),
-        &sb(&big_headers),
+        &sb(&big_data),
     )
     .unwrap();
-    let (body, headers) =
-        kyberbox::decrypt("large", &bob_x_sk, &alice_x_pk, &bob_kyber_sk, &wire).unwrap();
+    let body = kyberbox::decrypt("large", &bob_x_sk, &alice_x_pk, &bob_kyber_sk, &wire).unwrap();
 
-    assert_eq!(body.expose_as_slice(), big_body.as_slice());
-    assert_eq!(headers.expose_as_slice(), big_headers.as_slice());
+    assert_eq!(body.expose_as_slice(), big_data.as_slice());
 }
 
 #[test]
@@ -778,15 +745,8 @@ fn sign_dili_various_message_sizes() {
 fn kyberbox_corrupt_kem_byte_at(offset: usize) {
     let (alice_x_sk, alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
-    let wire = kyberbox::encrypt(
-        "ctx",
-        &alice_x_sk,
-        &bob_x_pk,
-        &bob_kyber_pk,
-        &sb(b"body"),
-        &sb(b"hdr"),
-    )
-    .unwrap();
+    let wire =
+        kyberbox::encrypt("ctx", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &sb(b"body")).unwrap();
 
     let mut kem_bytes = wire.kem_ct.expose_as_slice().to_vec();
     assert!(offset < kem_bytes.len());
@@ -794,8 +754,7 @@ fn kyberbox_corrupt_kem_byte_at(offset: usize) {
 
     let corrupted = kyberbox::WirePayload {
         kem_ct: SecretBytes::new(kem_bytes),
-        enc_body: wire.enc_body.clone(),
-        enc_headers: wire.enc_headers.clone(),
+        enc_data: wire.enc_data.clone(),
     };
     assert!(
         kyberbox::decrypt("ctx", &bob_x_sk, &alice_x_pk, &bob_kyber_sk, &corrupted).is_err(),
@@ -828,21 +787,13 @@ fn kyberbox_truncated_kem_ciphertext_fails() {
     let (alice_x_sk, alice_x_pk, _bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
     let (_, fresh_kyber_sk) = keys::random_kyber_mlkem1024_keypair().unwrap();
-    let wire = kyberbox::encrypt(
-        "ctx",
-        &alice_x_sk,
-        &bob_x_pk,
-        &bob_kyber_pk,
-        &sb(b"body"),
-        &sb(b"hdr"),
-    )
-    .unwrap();
+    let wire =
+        kyberbox::encrypt("ctx", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &sb(b"body")).unwrap();
 
     let truncated = SecretBytes::from_slice(&wire.kem_ct.expose_as_slice()[..36]);
     let bad = kyberbox::WirePayload {
         kem_ct: truncated,
-        enc_body: wire.enc_body.clone(),
-        enc_headers: wire.enc_headers.clone(),
+        enc_data: wire.enc_data.clone(),
     };
     assert!(kyberbox::decrypt("ctx", &bob_x_sk, &alice_x_pk, &fresh_kyber_sk, &bad).is_err());
 }
@@ -851,144 +802,62 @@ fn kyberbox_truncated_kem_ciphertext_fails() {
 fn kyberbox_empty_kem_ct_fails() {
     let (alice_x_sk, alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
-    let wire = kyberbox::encrypt(
-        "ctx",
-        &alice_x_sk,
-        &bob_x_pk,
-        &bob_kyber_pk,
-        &sb(b"body"),
-        &sb(b"hdr"),
-    )
-    .unwrap();
+    let wire =
+        kyberbox::encrypt("ctx", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &sb(b"body")).unwrap();
     let bad = kyberbox::WirePayload {
         kem_ct: sb(b""),
-        enc_body: wire.enc_body.clone(),
-        enc_headers: wire.enc_headers.clone(),
+        enc_data: wire.enc_data.clone(),
     };
     assert!(kyberbox::decrypt("ctx", &bob_x_sk, &alice_x_pk, &bob_kyber_sk, &bad).is_err());
 }
 
 #[test]
-fn kyberbox_corrupt_enc_body_tag_fails() {
+fn kyberbox_corrupt_enc_data_tag_fails() {
     let (alice_x_sk, alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
-    let wire = kyberbox::encrypt(
-        "ctx",
-        &alice_x_sk,
-        &bob_x_pk,
-        &bob_kyber_pk,
-        &sb(b"body"),
-        &sb(b"hdr"),
-    )
-    .unwrap();
+    let wire =
+        kyberbox::encrypt("ctx", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &sb(b"body")).unwrap();
 
-    let mut body_bytes = wire.enc_body.expose_as_slice().to_vec();
+    let mut body_bytes = wire.enc_data.expose_as_slice().to_vec();
     let last = body_bytes.len() - 1;
     body_bytes[last] ^= 0x01;
 
     let bad = kyberbox::WirePayload {
         kem_ct: wire.kem_ct.clone(),
-        enc_body: SecretBytes::new(body_bytes),
-        enc_headers: wire.enc_headers.clone(),
+        enc_data: SecretBytes::new(body_bytes),
     };
     assert!(kyberbox::decrypt("ctx", &bob_x_sk, &alice_x_pk, &bob_kyber_sk, &bad).is_err());
 }
 
 #[test]
-fn kyberbox_corrupt_enc_body_version_fails() {
+fn kyberbox_corrupt_enc_data_version_fails() {
     let (alice_x_sk, alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
-    let wire = kyberbox::encrypt(
-        "ctx",
-        &alice_x_sk,
-        &bob_x_pk,
-        &bob_kyber_pk,
-        &sb(b"body"),
-        &sb(b"hdr"),
-    )
-    .unwrap();
+    let wire =
+        kyberbox::encrypt("ctx", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &sb(b"body")).unwrap();
 
-    let mut body_bytes = wire.enc_body.expose_as_slice().to_vec();
+    let mut body_bytes = wire.enc_data.expose_as_slice().to_vec();
     body_bytes[0] ^= 0xFF;
 
     let bad = kyberbox::WirePayload {
         kem_ct: wire.kem_ct.clone(),
-        enc_body: SecretBytes::new(body_bytes),
-        enc_headers: wire.enc_headers.clone(),
+        enc_data: SecretBytes::new(body_bytes),
     };
     assert!(kyberbox::decrypt("ctx", &bob_x_sk, &alice_x_pk, &bob_kyber_sk, &bad).is_err());
-}
-
-#[test]
-fn kyberbox_corrupt_enc_headers_tag_fails() {
-    let (alice_x_sk, alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
-        kyberbox_alice_bob();
-    let wire = kyberbox::encrypt(
-        "ctx",
-        &alice_x_sk,
-        &bob_x_pk,
-        &bob_kyber_pk,
-        &sb(b"body"),
-        &sb(b"hdr"),
-    )
-    .unwrap();
-
-    let mut hdr_bytes = wire.enc_headers.expose_as_slice().to_vec();
-    let last = hdr_bytes.len() - 1;
-    hdr_bytes[last] ^= 0x01;
-
-    let bad = kyberbox::WirePayload {
-        kem_ct: wire.kem_ct.clone(),
-        enc_body: wire.enc_body.clone(),
-        enc_headers: SecretBytes::new(hdr_bytes),
-    };
-    assert!(kyberbox::decrypt("ctx", &bob_x_sk, &alice_x_pk, &bob_kyber_sk, &bad).is_err());
-}
-
-#[test]
-fn kyberbox_swapped_body_and_headers_fails() {
-    // body and headers are encrypted with different derived keys and different AADs -
-    // swapping them must fail on both slots.
-    let (alice_x_sk, alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
-        kyberbox_alice_bob();
-    let wire = kyberbox::encrypt(
-        "ctx",
-        &alice_x_sk,
-        &bob_x_pk,
-        &bob_kyber_pk,
-        &sb(b"body-content"),
-        &sb(b"header-content"),
-    )
-    .unwrap();
-
-    let swapped = kyberbox::WirePayload {
-        kem_ct: wire.kem_ct.clone(),
-        enc_body: wire.enc_headers.clone(),
-        enc_headers: wire.enc_body.clone(),
-    };
-    assert!(kyberbox::decrypt("ctx", &bob_x_sk, &alice_x_pk, &bob_kyber_sk, &swapped).is_err());
 }
 
 #[test]
 fn kyberbox_truncated_enc_body_fails() {
     let (alice_x_sk, alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
-    let wire = kyberbox::encrypt(
-        "ctx",
-        &alice_x_sk,
-        &bob_x_pk,
-        &bob_kyber_pk,
-        &sb(b"body"),
-        &sb(b"hdr"),
-    )
-    .unwrap();
+    let wire =
+        kyberbox::encrypt("ctx", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &sb(b"body")).unwrap();
 
     // truncate enc_body to 10 bytes (< minimum 29)
-    let truncated = SecretBytes::from_slice(&wire.enc_body.expose_as_slice()[..10]);
+    let truncated = SecretBytes::from_slice(&wire.enc_data.expose_as_slice()[..10]);
     let bad = kyberbox::WirePayload {
         kem_ct: wire.kem_ct.clone(),
-        enc_body: truncated,
-        enc_headers: wire.enc_headers.clone(),
+        enc_data: truncated,
     };
     assert!(kyberbox::decrypt("ctx", &bob_x_sk, &alice_x_pk, &bob_kyber_sk, &bad).is_err());
 }
@@ -999,27 +868,14 @@ fn kyberbox_roundtrip_various_payload_sizes() {
         kyberbox_alice_bob();
     for &size in &[0usize, 1, 15, 16, 32, 100, 1024] {
         let body = vec![0xBBu8; size];
-        let headers = vec![0xCCu8; size / 2 + 1];
-        let wire = kyberbox::encrypt(
-            "sweep",
-            &alice_x_sk,
-            &bob_x_pk,
-            &bob_kyber_pk,
-            &sb(&body),
-            &sb(&headers),
-        )
-        .unwrap();
-        let (dec_body, dec_hdr) =
+        let wire =
+            kyberbox::encrypt("sweep", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &sb(&body)).unwrap();
+        let dec_data =
             kyberbox::decrypt("sweep", &bob_x_sk, &alice_x_pk, &bob_kyber_sk, &wire).unwrap();
         assert_eq!(
-            dec_body.expose_as_slice(),
+            dec_data.expose_as_slice(),
             body.as_slice(),
             "body size={size}"
-        );
-        assert_eq!(
-            dec_hdr.expose_as_slice(),
-            headers.as_slice(),
-            "hdr size={size}"
         );
     }
 }
@@ -1107,16 +963,13 @@ fn cross_kyberbox_nondeterministic_wire() {
     let (alice_x_sk, _alice_x_pk, _bob_kyber_sk, bob_kyber_pk, _bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
     let body = sb(b"same body");
-    let hdr = sb(b"same headers");
 
-    let wire1 =
-        kyberbox::encrypt("ctx", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &body, &hdr).unwrap();
-    let wire2 =
-        kyberbox::encrypt("ctx", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &body, &hdr).unwrap();
+    let wire1 = kyberbox::encrypt("ctx", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &body).unwrap();
+    let wire2 = kyberbox::encrypt("ctx", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &body).unwrap();
 
     assert_ne!(
-        wire1.enc_body.expose_as_slice(),
-        wire2.enc_body.expose_as_slice(),
+        wire1.enc_data.expose_as_slice(),
+        wire2.enc_data.expose_as_slice(),
         "KyberBox must produce non-deterministic ciphertexts"
     );
 }
@@ -1134,7 +987,6 @@ fn kyberbox_cross_ctx_kem_ct_transplant_fails() {
         &bob_x_pk,
         &bob_kyber_pk,
         &sb(b"body"),
-        &sb(b"hdr"),
     )
     .unwrap();
     let wire_beta = kyberbox::encrypt(
@@ -1143,14 +995,12 @@ fn kyberbox_cross_ctx_kem_ct_transplant_fails() {
         &bob_x_pk,
         &bob_kyber_pk,
         &sb(b"body"),
-        &sb(b"hdr"),
     )
     .unwrap();
 
     let doctored = kyberbox::WirePayload {
         kem_ct: wire_alpha.kem_ct,
-        enc_body: wire_beta.enc_body,
-        enc_headers: wire_beta.enc_headers,
+        enc_data: wire_beta.enc_data,
     };
     assert!(
         kyberbox::decrypt("ctx-beta", &bob_x_sk, &alice_x_pk, &bob_kyber_sk, &doctored).is_err(),
@@ -1160,9 +1010,6 @@ fn kyberbox_cross_ctx_kem_ct_transplant_fails() {
 
 #[test]
 fn kyberbox_cross_ctx_enc_body_transplant_fails() {
-    // enc_body is encrypted with a key derived as HKDF(base_key, info="{ctx}/body-key/v1")
-    // and authenticated with AAD "{ctx}/body/v1".
-    // A ciphertext produced under ctx-alpha cannot be decrypted under ctx-beta.
     let (alice_x_sk, alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
 
@@ -1172,7 +1019,6 @@ fn kyberbox_cross_ctx_enc_body_transplant_fails() {
         &bob_x_pk,
         &bob_kyber_pk,
         &sb(b"body"),
-        &sb(b"hdr"),
     )
     .unwrap();
     let wire_beta = kyberbox::encrypt(
@@ -1181,14 +1027,12 @@ fn kyberbox_cross_ctx_enc_body_transplant_fails() {
         &bob_x_pk,
         &bob_kyber_pk,
         &sb(b"body"),
-        &sb(b"hdr"),
     )
     .unwrap();
 
     let doctored = kyberbox::WirePayload {
         kem_ct: wire_beta.kem_ct,
-        enc_body: wire_alpha.enc_body,
-        enc_headers: wire_beta.enc_headers,
+        enc_data: wire_alpha.enc_data,
     };
     assert!(
         kyberbox::decrypt("ctx-beta", &bob_x_sk, &alice_x_pk, &bob_kyber_sk, &doctored).is_err(),
@@ -1197,47 +1041,7 @@ fn kyberbox_cross_ctx_enc_body_transplant_fails() {
 }
 
 #[test]
-fn kyberbox_cross_ctx_enc_headers_transplant_fails() {
-    // enc_headers is derived and authenticated analogously to enc_body but with
-    // "{ctx}/headers-key/v1" and "{ctx}/headers/v1". Same transplant must fail.
-    let (alice_x_sk, alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
-        kyberbox_alice_bob();
-
-    let wire_alpha = kyberbox::encrypt(
-        "ctx-alpha",
-        &alice_x_sk,
-        &bob_x_pk,
-        &bob_kyber_pk,
-        &sb(b"body"),
-        &sb(b"hdr"),
-    )
-    .unwrap();
-    let wire_beta = kyberbox::encrypt(
-        "ctx-beta",
-        &alice_x_sk,
-        &bob_x_pk,
-        &bob_kyber_pk,
-        &sb(b"body"),
-        &sb(b"hdr"),
-    )
-    .unwrap();
-
-    let doctored = kyberbox::WirePayload {
-        kem_ct: wire_beta.kem_ct,
-        enc_body: wire_beta.enc_body,
-        enc_headers: wire_alpha.enc_headers,
-    };
-    assert!(
-        kyberbox::decrypt("ctx-beta", &bob_x_sk, &alice_x_pk, &bob_kyber_sk, &doctored).is_err(),
-        "enc_headers from a different ctx must not decrypt"
-    );
-}
-
-#[test]
 fn kyberbox_wire_replay_to_different_recipient_fails() {
-    // A WirePayload encrypted for session A (bob's keys, ctx="session-a") must not
-    // be decryptable in session B (carol's keys, ctx="session-b").
-    // Tests that neither the ML-KEM nor the X25519 component crosses session boundaries.
     let (alice_x_sk, alice_x_pk, _bob_kyber_sk, bob_kyber_pk, _bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
     let (carol_x_sk, carol_x_pk, carol_kyber_sk, carol_kyber_pk, _, _) = kyberbox_alice_bob();
@@ -1249,7 +1053,6 @@ fn kyberbox_wire_replay_to_different_recipient_fails() {
         &bob_x_pk,
         &bob_kyber_pk,
         &sb(b"secret"),
-        &sb(b"hdr"),
     )
     .unwrap();
 

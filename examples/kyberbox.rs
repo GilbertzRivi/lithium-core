@@ -20,7 +20,6 @@ fn main() -> lithium_core::Result<()> {
     let (sender_priv_x, sender_pub_x) = keys::random_x25519_keypair()?;
 
     let body = SecretBytes::from_slice(b"attack at dawn");
-    let headers = SecretBytes::from_slice(b"to: alice");
 
     let wire = kyberbox::encrypt(
         ctx,
@@ -28,10 +27,9 @@ fn main() -> lithium_core::Result<()> {
         &recipient_pub_x,
         &recipient_kyber_pub,
         &body,
-        &headers,
     )?;
 
-    let (plain_body, plain_headers) = kyberbox::decrypt(
+    let plain_data = kyberbox::decrypt(
         ctx,
         &recipient_priv_x,
         &sender_pub_x,
@@ -39,12 +37,11 @@ fn main() -> lithium_core::Result<()> {
         &wire,
     )?;
 
-    assert_eq!(plain_body.expose_as_slice(), body.expose_as_slice());
-    assert_eq!(plain_headers.expose_as_slice(), headers.expose_as_slice());
+    assert_eq!(plain_data.expose_as_slice(), body.expose_as_slice());
 
     println!(
         "kyberbox round-trip ok ({} sealed body bytes)",
-        wire.enc_body.expose_as_slice().len()
+        wire.enc_data.expose_as_slice().len()
     );
     Ok(())
 }

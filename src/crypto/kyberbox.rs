@@ -24,8 +24,7 @@ const KYBER_KEM_ID: u8 = 1;
 
 #[derive(Clone, Debug)]
 pub struct WirePayload {
-    pub enc_body: SecretBytes,
-    pub enc_headers: SecretBytes,
+    pub enc_data: SecretBytes,
     pub kem_ct: SecretBytes,
 }
 
@@ -76,24 +75,6 @@ fn derive_base_key(
     kdf::derive32(&ecdh_input, Some(&ss_salt), &SecretBytes::new(info))
 }
 
-#[inline]
-fn derive_body_key(base_key: &Byte32, ctx: &str) -> Result<Byte32> {
-    kdf::derive32(
-        &SecretBytes::from_slice(base_key.as_slice()),
-        None,
-        &label(ctx, "body-key"),
-    )
-}
-
-#[inline]
-fn derive_headers_key(base_key: &Byte32, ctx: &str) -> Result<Byte32> {
-    kdf::derive32(
-        &SecretBytes::from_slice(base_key.as_slice()),
-        None,
-        &label(ctx, "headers-key"),
-    )
-}
-
 fn encapsulate_kem(peer_kyber_pub: &[u8]) -> Result<(Byte32, [u8; 32], SecretBytes)> {
     let pk = KyberPublicKey::from_bytes(peer_kyber_pub).map_err(|_| LithiumError::internal())?;
 
@@ -137,8 +118,7 @@ pub fn encrypt(
     priv_x: &Byte32,
     peer_pub_x: &Byte32,
     peer_k_pub: &SecretBytes,
-    body: &SecretBytes,
-    headers: &SecretBytes,
+    data: &SecretBytes,
 ) -> Result<WirePayload> {
     let ecdh_key = derive_ecdh_key(priv_x, peer_pub_x, ctx)?;
 
@@ -148,26 +128,10 @@ pub fn encrypt(
     let (ss_kem, ct_hash, kem_ct) = encapsulate_kem(peer_k_pub.expose_as_slice())?;
 
     let base_key = derive_base_key(&ss_kem, &ecdh_key, &ct_t, &ek_t, &ct_hash, ctx)?;
-    let body_key = derive_body_key(&base_key, ctx)?;
-    let headers_key = derive_headers_key(&base_key, ctx)?;
+    let nonce = keys::random_12()?;
+    let enc_data = aead::encrypt(data, &base_key, &nonce, &label(ctx, "data"))?;
 
-    let body_nonce = keys::random_12()?;
-    let headers_nonce = keys::random_12()?;
-
-    let enc_body = aead::encrypt(body, &body_key, &body_nonce, &label(ctx, "body"))?;
-
-    let enc_headers = aead::encrypt(
-        headers,
-        &headers_key,
-        &headers_nonce,
-        &label(ctx, "headers"),
-    )?;
-
-    Ok(WirePayload {
-        enc_body,
-        enc_headers,
-        kem_ct,
-    })
+    Ok(WirePayload { enc_data, kem_ct })
 }
 
 pub fn decrypt(
@@ -176,7 +140,7 @@ pub fn decrypt(
     peer_pub_x: &Byte32,
     kyber_priv: &SecretBytes,
     wire: &WirePayload,
-) -> Result<(SecretBytes, SecretBytes)> {
+) -> Result<SecretBytes> {
     let ecdh_key = derive_ecdh_key(priv_x, peer_pub_x, ctx)?;
 
     let ct_t = *peer_pub_x.as_array();
@@ -186,12 +150,7 @@ pub fn decrypt(
         decapsulate_kem(kyber_priv.expose_as_slice(), wire.kem_ct.expose_as_slice())?;
 
     let base_key = derive_base_key(&ss_kem, &ecdh_key, &ct_t, &ek_t, &ct_hash, ctx)?;
-    let body_key = derive_body_key(&base_key, ctx)?;
-    let headers_key = derive_headers_key(&base_key, ctx)?;
+    let dec_data = aead::decrypt(&wire.enc_data, &base_key, &label(ctx, "data"))?;
 
-    let dec_body = aead::decrypt(&wire.enc_body, &body_key, &label(ctx, "body"))?;
-
-    let dec_headers = aead::decrypt(&wire.enc_headers, &headers_key, &label(ctx, "headers"))?;
-
-    Ok((dec_body, dec_headers))
+    Ok(dec_data)
 }

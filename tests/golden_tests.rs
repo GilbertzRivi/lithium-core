@@ -36,12 +36,11 @@ fn kyberbox_wire_decrypts_to_pinned_plaintext() {
     let msg_x_pub = Byte32::from_hex(vectors["MSG_X_PUB"]).unwrap();
     let kyber_priv = SecretBytes::from_hex(vectors["KYBER_PRIV"]).unwrap();
     let wire = WirePayload {
-        enc_body: SecretBytes::from_hex(vectors["ENC_BODY"]).unwrap(),
-        enc_headers: SecretBytes::from_hex(vectors["ENC_HEADERS"]).unwrap(),
+        enc_data: SecretBytes::from_hex(vectors["ENC_DATA"]).unwrap(),
         kem_ct: SecretBytes::from_hex(vectors["KEM_CT"]).unwrap(),
     };
 
-    let (body, headers) = kyberbox::decrypt(
+    let body = kyberbox::decrypt(
         "golden/kyberbox/v1",
         &rx_x_priv,
         &msg_x_pub,
@@ -51,7 +50,6 @@ fn kyberbox_wire_decrypts_to_pinned_plaintext() {
     .unwrap();
 
     assert_eq!(body.expose_as_slice(), b"golden-body-v1");
-    assert_eq!(headers.expose_as_slice(), b"golden-headers-v1");
 }
 
 #[test]
