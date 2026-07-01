@@ -61,9 +61,9 @@ separation, and Rust/FFI boundary are implemented faithfully.
   `mldsa87_verify_golden_v1`).
 - Public API tests: `crypto_tests` (89), `secret_tests` (66), 
   `password_tests` (21), `store_tests` (14).
-- Fuzzing: 13 `cargo-fuzz` targets on the surfaces that parse 
-  untrusted input (the KyberBox wire format, the `.keyf` parser, 
-  hex and JSON decoding).
+- Fuzzing: 7 `cargo-fuzz` targets on the surfaces that parse 
+  untrusted input (`keyfile_parse`, `secret_json`, `opaque_parse`, 
+  `kyberbox_decrypt`, `aead_decrypt`, `sign_verify`, `pow_verify`).
 
 ## What the auditor gets
 

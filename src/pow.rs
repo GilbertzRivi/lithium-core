@@ -38,6 +38,11 @@ pub fn verify(challenge: &[u8], nonce: u64, bits: u32) -> bool {
 }
 
 pub fn try_solve(challenge: &[u8], bits: u32, max_iters: u64) -> Option<u64> {
+    // verify() accepts any nonce when bits == 0, so the solution is immediate
+    // and independent of max_iters (which may legitimately be 0).
+    if bits == 0 {
+        return Some(0);
+    }
     let mut nonce = 0u64;
     for _ in 0..max_iters {
         if verify(challenge, nonce, bits) {
@@ -75,5 +80,10 @@ mod tests {
     #[test]
     fn zero_bits_always_passes() {
         assert!(verify(&[0xff; 32], 0, 0));
+    }
+
+    #[test]
+    fn zero_bits_solves_with_no_budget() {
+        assert_eq!(try_solve(b"anything", 0, 0), Some(0));
     }
 }

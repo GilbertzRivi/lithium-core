@@ -21,8 +21,7 @@ lithiums (server)      uses lithium_core
 
 `lithium_core` is a shared dependency of `lithiumd` and 
 `lithiums`. It holds everything that isn't specific to one layer: 
-the cryptography, the secret types, key management, and the 
-database integration.
+the cryptography, the secret types, and key management.
 
 ## Modules
 
@@ -159,7 +158,7 @@ rotation, and recovers an interrupted rotation.
 **On-disk directory layout:**
 
 ```
-{base_dir}/{kind}/{name}/
+{base_dir}/{kind}/
   pub/
     ed25519.pub
     x25519.pub
@@ -218,10 +217,7 @@ KeyManager::start(base_dir, kind, mk_provider) -> Result<KeyManager<P>>
 KeyManager::start_plain(base_dir, kind) -> Result<KeyManager<PlainFileMkProvider>>
 
 // Access to private keys (callback pattern, the key never leaves scope)
-manager.with_ed_sk(|seed| { ... }) -> Result<R>
-manager.with_x25519_sk(|seed| { ... }) -> Result<R>
-manager.with_kyber_sk(|sk| { ... }) -> Result<R>
-manager.with_dilithium_sk(|sk| { ... }) -> Result<R>
+manager.with_signing_keys(|ed_seed, dili_sk| { ... }) -> Result<R>
 manager.with_x25519_and_kyber_sk(|x_seed, kyber_sk| { ... }) -> Result<R>
 
 // Public keys
@@ -413,35 +409,6 @@ The wrapping key = `Argon2id(data_password, salt)`. AAD =
 
 ---
 
-### `db`: database integration
-
-#### `db::DataManager<P>`
-
-A facade that joins a `DatabaseConnection` (SeaORM) with a 
-`KeyManager`. It manages encryption of blobs in the database.
-
-```rust
-DataManager::new(db, key_manager) -> Self
-manager.db() -> &DatabaseConnection
-manager.load_db_dek() -> Result<Byte32>             // from the label "lithium/db-dek/v1"
-manager.users_uuid_namespace() -> Result<Uuid>      // deterministic UUID namespace
-manager.encrypt_db_blob(plaintext, aad) -> Result<SecretBytes>
-manager.decrypt_db_blob(blob, aad) -> Result<SecretBytes>
-```
-
-The database DEK is derived from the MK through `derive_secret32` 
-with the label `b"lithium/db-dek/v1"`. The DEK is stored as a 
-`.keyf` file in the `secrets/` directory. MK rotation **rewraps 
-the DEK file** (swaps its encryption to the new MK), but does not 
-change the key value itself, so the data in the database stays 
-encrypted under the same DEK and doesn't need re-encryption.
-
-The users' UUID namespace is deterministic and derived from the 
-MK, the same identity always generates the same UUID for a given 
-login.
-
----
-
 ### `utils`: helpers
 
 #### `utils::store`: `EphemeralStoreManager`
@@ -459,17 +426,8 @@ store.del(key) -> Result<()>
 
 An internal task (`tokio::spawn`) sweeps expired entries every 500 
 ms. When an expired entry is removed, the `SecretBytes` content is 
-zeroized before `drop`.
-
-#### `utils::headers`
-
-Helpers for parsing HTTP headers as secret types.
-
-```rust
-header_str(headers, name) -> Result<SecretString>
-header_hex::<N>(headers, name) -> Result<FixedBytes<N>>
-header_hex_bytes(headers, name) -> Result<SecretBytes>
-```
+zeroized before `drop`. The task is aborted when the last 
+`EphemeralStoreManager` handle is dropped.
 
 ---
 
@@ -534,8 +492,8 @@ argument is in [`kyberbox.md`](kyberbox.md). The concrete
 mechanisms behind those guarantees:
 
 - **Private-key confidentiality**: access only through a callback 
-  (`with_ed_sk`, `with_kyber_sk`), the value never leaks past the 
-  call scope.
+  (`with_signing_keys`, `with_x25519_and_kyber_sk`), the value 
+  never leaks past the call scope.
 - **Domain separation**: every KDF/AEAD operation runs under a 
   unique `info`/`aad` label.
 - **Zeroization**: `FixedBytes`/`SecretBytes`/`SecretString`/`SecretJson` 

@@ -4,7 +4,7 @@
 use core::fmt;
 use std::io;
 use subtle::ConstantTimeEq;
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 use secrecy::{ExposeSecret, ExposeSecretMut, SecretBox};
 
@@ -153,8 +153,8 @@ impl SecretBytes {
         self.0.expose_secret_mut()
     }
     #[inline]
-    pub fn expose_into_vec(self) -> Vec<u8> {
-        self.0.expose_secret().clone()
+    pub fn expose_into_vec(self) -> Zeroizing<Vec<u8>> {
+        Zeroizing::new(self.0.expose_secret().clone())
     }
     #[inline]
     pub fn to_hex(&self) -> SecretString {

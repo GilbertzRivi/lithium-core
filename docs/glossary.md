@@ -19,13 +19,9 @@ seeing the password.
 parameters 64 MiB, t=3, p=1. Used for password hashing and DEK 
 wrapping.
 
-**DataManager** - the `db` facade joining a SeaORM connection with 
-a KeyManager; encrypts and decrypts database blobs under a DEK 
-with a separate AAD per field.
-
 **DEK (Data Encryption Key)** - the key that encrypts data: in a 
 `.keyf` file it's random per file (wrapped under the KEK); a caller 
-may also derive a database DEK from the MK.
+may also derive one from the MK by label.
 
 **EphemeralStore** - in-memory store with TTL (`utils::store`); 
 zeroizes entries on expiry. A process restart wipes it.

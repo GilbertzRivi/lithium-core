@@ -15,6 +15,15 @@ use crate::secrets::bytes::SecretBytes;
 #[derive(Clone)]
 pub struct EphemeralStoreManager {
     inner: Arc<Mutex<StoreInner>>,
+    _cleanup: Arc<CleanupGuard>,
+}
+
+struct CleanupGuard(tokio::task::JoinHandle<()>);
+
+impl Drop for CleanupGuard {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
 }
 
 #[derive(Default)]
@@ -69,16 +78,17 @@ impl EphemeralStoreManager {
             return Err(LithiumError::state_missing("tokio_runtime"));
         }
         let inner = Arc::new(Mutex::new(StoreInner::default()));
-        let mgr = Self {
-            inner: inner.clone(),
-        };
-        tokio::spawn(async move {
+        let cleanup_inner = inner.clone();
+        let handle = tokio::spawn(async move {
             loop {
                 tokio::time::sleep(Duration::from_millis(500)).await;
-                let _ = EphemeralStoreManager::cleanup_once(&inner).await;
+                let _ = EphemeralStoreManager::cleanup_once(&cleanup_inner).await;
             }
         });
-        Ok(mgr)
+        Ok(Self {
+            inner,
+            _cleanup: Arc::new(CleanupGuard(handle)),
+        })
     }
 
     async fn cleanup_once(inner: &Arc<Mutex<StoreInner>>) -> Result<()> {
