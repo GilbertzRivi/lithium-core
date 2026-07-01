@@ -201,7 +201,7 @@ rotation interval is **3600 seconds** (1 hour).
 pub trait MkProvider {
     fn load_mk(&self) -> Result<Byte32>;
     fn store_mk(&self, mk: &Byte32) -> Result<()>;
-    fn derive_secret32(&self, mk: &Byte32, label: &[u8]) -> Result<Byte32>;
+    fn derive_secret32(&self, mk: &Byte32, label: &[u8], secrets_dir: &Path) -> Result<Byte32>;
 }
 ```
 
@@ -216,7 +216,7 @@ based on the user's password and a server component.
 KeyManager::start(base_dir, kind, mk_provider) -> Result<KeyManager<P>>
 KeyManager::start_plain(base_dir, kind) -> Result<KeyManager<PlainFileMkProvider>>
 
-// Access to private keys (callback pattern, the key never leaves scope)
+// Access to private keys (callback pattern, loaded only for the call)
 manager.with_signing_keys(|ed_seed, dili_sk| { ... }) -> Result<R>
 manager.with_x25519_and_kyber_sk(|x_seed, kyber_sk| { ... }) -> Result<R>
 
@@ -232,6 +232,12 @@ manager.jwt_secret() -> &Byte32
 // Rotation
 manager.maybe_rotate_mk() -> Result<()>
 ```
+
+Key material is loaded only for the duration of the callback and 
+is not stored by `KeyManager` after use. The callback receives 
+owned secret values (`Byte32`, `SecretBytes`); confinement is not 
+enforced by the type system, so the caller must not persist or 
+leak them past that scope.
 
 **`PublicKeys`:**
 
@@ -492,8 +498,9 @@ argument is in [`kyberbox.md`](kyberbox.md). The concrete
 mechanisms behind those guarantees:
 
 - **Private-key confidentiality**: access only through a callback 
-  (`with_signing_keys`, `with_x25519_and_kyber_sk`), the value 
-  never leaks past the call scope.
+  (`with_signing_keys`, `with_x25519_and_kyber_sk`); `KeyManager` 
+  loads the key for the call and does not retain it afterwards. 
+  Confinement past the callback is the caller's responsibility.
 - **Domain separation**: every KDF/AEAD operation runs under a 
   unique `info`/`aad` label.
 - **Zeroization**: `FixedBytes`/`SecretBytes`/`SecretString`/`SecretJson` 

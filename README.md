@@ -17,7 +17,8 @@ labels are supplied by the caller - the crypto itself is application-agnostic.
 ### 1. At-rest key management (`keys`, `secrets`)
 
 `KeyManager` owns an on-disk keyfile: it generates the hybrid identity, seals private keys under
-a master key from a pluggable `MkProvider` (plain file or TPM), and performs crash-safe hourly
+a master key from a pluggable `MkProvider`; the built-in provider is a plain file provider,
+while hardware-backed sealing can be supplied by the caller. It performs crash-safe hourly
 rotation and rewrap. Secret types (`Byte32`, `SecretBytes`, `MasterKey32`, ...) zeroize on drop.
 
 ### 2. Hybrid encryption (`crypto`)

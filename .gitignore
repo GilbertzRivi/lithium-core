@@ -2,3 +2,8 @@
 .claude
 /CLAUDE.md
 .idea
+
+# OpenPGP private/revocation material - never commit
+*secret*.asc
+*-secret.asc
+*revoke*.asc

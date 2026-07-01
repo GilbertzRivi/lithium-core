@@ -23,10 +23,10 @@ on:
   workflow_dispatch:
 
 jobs:
-  # Builds the kyberbox example twice in the pinned container and asserts the
-  # binaries are bit-identical. A reproducible build lets anyone verify an
-  # artifact was compiled from the public source: a coerced, backdoored build
-  # will not reproduce.
+  # Smoke-test deterministic builds for the kyberbox example in the pinned
+  # container: builds it twice and asserts the binaries are bit-identical. This
+  # exercises the toolchain and container pinning; it is not a full-artifact
+  # reproducibility guarantee.
   reproducible:
     runs-on: ubuntu-latest
     steps:
