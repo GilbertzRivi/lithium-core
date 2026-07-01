@@ -19,7 +19,7 @@ master key never touches the payload directly.
 
 | Key | Type | Derivation / source | Storage | Lifetime / rotation | Protects |
 |-----|------|--------------------|---------|--------------------|----------|
-| Master Key (MK) | 32 B random | supplied/sealed by an `MkProvider` (file or TPM) | provider-specific (see below) | rotated every 1 h (`MkRotator`, 30 s tick) | every `.keyf` file (through the KEK) |
+| Master Key (MK) | 32 B random | supplied/sealed by an `MkProvider` (see below) | provider-specific (see below) | rotated every 1 h (`MkRotator`, 30 s tick) | every `.keyf` file (through the KEK) |
 | KEK | 32 B | `HKDF(MK, file_salt, info="kek/v1")` | not stored (derived on use) | with the MK | wrapping the DEK in a `.keyf` |
 | `.keyf` DEK | 32 B random | random per file | in the `.keyf`, wrapped under the KEK | rewrapped on MK rotation (value unchanged) | the key/secret payload in the file |
 
@@ -29,21 +29,19 @@ those outputs and their labels are the caller's responsibility.
 
 ## MkProvider
 
-The master key source is pluggable:
+The master key source is a trait, `MkProvider`, so the storage of 
+the MK is the caller's choice:
 
-- **`PlainFileMkProvider`**: the MK lives in a file. The caller 
-  can wrap it under a passphrase, for example 
+- **`PlainFileMkProvider`** is the one built-in provider. The MK 
+  lives in a file. This is the plain provider: it offers no 
+  protection beyond the file's own permissions, so the caller is 
+  expected to wrap it, for example 
   `AES-256-GCM-SIV(MK, Argon2id(passphrase, salt), aad="lithium/mkfile/v1")` 
   stored at `keystore/user/mk.enc`.
-- **`TpmMkProvider`** (default when the `tpm` feature is on): the 
-  MK is sealed as a KEYEDHASH object in the TPM under an ECC P-256 
-  restricted decryption parent, derived deterministically from the 
-  owner seed. The parent is **never persisted**. The sealed blob 
-  goes to `LITHIUM_TPM_SEALED_PATH`. Falls back to the plain file 
-  provider when `LITHIUM_MK_PROVIDER=plain`.
-
-The same library serves both client and server; they differ only 
-in which `MkProvider` supplies the MK.
+- A caller that needs hardware-backed protection implements its 
+  own `MkProvider` (for example sealing the MK into a secure 
+  element or TPM) and passes it to `KeyManager::start`. The library 
+  never sees the MK except through `load_mk`/`store_mk`.
 
 ## Rotation
 
@@ -64,5 +62,5 @@ What the library's at-rest protection holds against:
 
 | Compromise | What's exposed | What's still protected |
 |------------|----------------|------------------------|
-| The disk alone, without the MK (or its passphrase/TPM) | nothing, `.keyf` files are encrypted | all key material |
+| The disk alone, without the MK (or whatever the `MkProvider` guards it with) | nothing, `.keyf` files are encrypted | all key material |
 | Breaking ML-KEM **or** X25519 on its own | nothing, the other half of the hybrid still holds | message content (both must break) |

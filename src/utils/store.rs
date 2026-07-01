@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use zeroize::Zeroize;
 
-use crate::error::Result;
+use crate::error::{LithiumError, Result};
 use crate::secrets::bytes::SecretBytes;
 
 #[derive(Clone)]
@@ -62,6 +62,12 @@ impl Eq for HeapEntry {}
 
 impl EphemeralStoreManager {
     pub fn new() -> Result<Self> {
+        // The background cleanup task is spawned here, so a Tokio runtime must be
+        // entered on the calling thread; without it tokio::spawn would panic and a
+        // library must not panic on a caller's account.
+        if tokio::runtime::Handle::try_current().is_err() {
+            return Err(LithiumError::state_missing("tokio_runtime"));
+        }
         let inner = Arc::new(Mutex::new(StoreInner::default()));
         let mgr = Self {
             inner: inner.clone(),
@@ -127,6 +133,9 @@ impl EphemeralStoreManager {
         value: &SecretBytes,
         ttl: Duration,
     ) -> Result<bool> {
+        if ttl.is_zero() {
+            return Ok(false);
+        }
         let now = Instant::now();
         let expires_at = now + ttl;
         let mut guard = self.inner.lock().await;

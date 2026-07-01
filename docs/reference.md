@@ -214,8 +214,8 @@ based on the user's password and a server component.
 
 ```rust
 // Initialization
-KeyManager::start(base_dir, kind, name, mk_provider) -> Result<KeyManager<P>>
-KeyManager::start_plain(base_dir, kind, name) -> Result<KeyManager<PlainFileMkProvider>>
+KeyManager::start(base_dir, kind, mk_provider) -> Result<KeyManager<P>>
+KeyManager::start_plain(base_dir, kind) -> Result<KeyManager<PlainFileMkProvider>>
 
 // Access to private keys (callback pattern, the key never leaves scope)
 manager.with_ed_sk(|seed| { ... }) -> Result<R>

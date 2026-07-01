@@ -124,6 +124,11 @@ impl LithiumError {
     }
 
     #[inline]
+    pub fn malformed_keyfile() -> Self {
+        Self::new(CryptoErrorKind::MalformedKeyfile)
+    }
+
+    #[inline]
     pub fn invalid_credentials(msg: &'static str) -> Self {
         Self::new(CryptoErrorKind::InvalidCredentials { msg })
     }
@@ -245,6 +250,7 @@ pub enum CryptoErrorKind {
     AeadFailed,
     Io,
     Internal,
+    MalformedKeyfile,
 }
 
 impl fmt::Display for CryptoErrorKind {
@@ -275,6 +281,7 @@ impl fmt::Display for CryptoErrorKind {
             CryptoErrorKind::AeadFailed => write!(f, "cryptographic operation failed"),
             CryptoErrorKind::Io => write!(f, "i/o error"),
             CryptoErrorKind::Internal => write!(f, "internal error"),
+            CryptoErrorKind::MalformedKeyfile => write!(f, "malformed keyfile"),
         }
     }
 }

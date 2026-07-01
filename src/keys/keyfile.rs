@@ -167,7 +167,7 @@ fn parse_keyfile(
         return Err(LithiumError::invalid_len(8, buf.len()));
     }
     if &buf[0..4] != KEYFILE_MAGIC {
-        return Err(LithiumError::internal());
+        return Err(LithiumError::malformed_keyfile());
     }
 
     idx += 4;
@@ -180,7 +180,7 @@ fn parse_keyfile(
 
     let len_salt = read_u16(buf, &mut idx)? as usize;
     if len_salt != 32 || idx + 32 > buf.len() {
-        return Err(LithiumError::internal());
+        return Err(LithiumError::malformed_keyfile());
     }
     let mut salt = [0u8; 32];
     salt.copy_from_slice(&buf[idx..idx + 32]);
@@ -188,7 +188,7 @@ fn parse_keyfile(
 
     let len_nonce_wrap = read_u16(buf, &mut idx)? as usize;
     if len_nonce_wrap != 12 || idx + 12 > buf.len() {
-        return Err(LithiumError::internal());
+        return Err(LithiumError::malformed_keyfile());
     }
     let mut nonce_wrap = [0u8; 12];
     nonce_wrap.copy_from_slice(&buf[idx..idx + 12]);
@@ -196,14 +196,14 @@ fn parse_keyfile(
 
     let len_ct_wrap = read_u16(buf, &mut idx)? as usize;
     if idx + len_ct_wrap > buf.len() {
-        return Err(LithiumError::internal());
+        return Err(LithiumError::malformed_keyfile());
     }
     let ct_wrap = buf[idx..idx + len_ct_wrap].to_vec();
     idx += len_ct_wrap;
 
     let len_nonce_payload = read_u16(buf, &mut idx)? as usize;
     if len_nonce_payload != 12 || idx + 12 > buf.len() {
-        return Err(LithiumError::internal());
+        return Err(LithiumError::malformed_keyfile());
     }
     let mut nonce_payload = [0u8; 12];
     nonce_payload.copy_from_slice(&buf[idx..idx + 12]);
@@ -211,7 +211,7 @@ fn parse_keyfile(
 
     let len_ct_payload = read_u32(buf, &mut idx)? as usize;
     if idx + len_ct_payload > buf.len() {
-        return Err(LithiumError::internal());
+        return Err(LithiumError::malformed_keyfile());
     }
     let ct_payload = buf[idx..idx + len_ct_payload].to_vec();
 
@@ -336,7 +336,7 @@ pub fn load_secret32_decrypted(
         parse_keyfile(&buf)?;
 
     if version != KEYFILE_VERSION || alg_id != ALG_ID_AES256_GCM_SIV || dek_len != DEK_LEN {
-        return Err(LithiumError::internal());
+        return Err(LithiumError::malformed_keyfile());
     }
 
     let aad = aad_for(version, key_type);
@@ -350,7 +350,7 @@ pub fn load_bytes_decrypted(path: &Path, mk: &MasterKey32, key_type: &str) -> Re
         parse_keyfile(&buf)?;
 
     if version != KEYFILE_VERSION || alg_id != ALG_ID_AES256_GCM_SIV || dek_len != DEK_LEN {
-        return Err(LithiumError::internal());
+        return Err(LithiumError::malformed_keyfile());
     }
 
     let aad = aad_for(version, key_type);
@@ -377,7 +377,7 @@ pub fn rewrap_keyfile_dek_to_bytes(
     ) = parse_keyfile(&buf)?;
 
     if version != KEYFILE_VERSION || alg_id != ALG_ID_AES256_GCM_SIV || dek_len != DEK_LEN {
-        return Err(LithiumError::internal());
+        return Err(LithiumError::malformed_keyfile());
     }
 
     let aad = aad_for(version, key_type);

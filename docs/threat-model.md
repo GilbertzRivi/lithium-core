@@ -23,8 +23,9 @@ IPC, the cover-traffic policy, the unlock UX.
 - **Authenticity/integrity**: `crypto::sign` (Ed25519 + ML-DSA-87, 
   dual signature), when the caller signs and verifies.
 - **At-rest key protection**: private keys sealed under a master 
-  key supplied by `MkProvider` (file or TPM); secret types zeroize 
-  on drop; crash-safe rotation with rewrap.
+  key supplied by `MkProvider` (a file, or any sealing provider the 
+  caller plugs in); secret types zeroize on drop; crash-safe 
+  rotation with rewrap.
 - **Post-quantum resistance (harvest-now-decrypt-later)**: the 
   ML-KEM-1024 branch protects traffic recorded today against a 
   future quantum adversary.
@@ -59,8 +60,8 @@ the caller upholding:
   ML-KEM-1024 (hybrid). Nonce reuse is tolerated by 
   AES-256-GCM-SIV as defense-in-depth.
 - **At-rest files without the master key.** Private keys are 
-  sealed; without the MK (file/TPM) they are unreadable. Security 
-  reduces to protecting the MK through `MkProvider`.
+  sealed; without the MK they are unreadable. Security reduces to 
+  protecting the MK through `MkProvider`.
 - **Adaptive attacker on decapsulation.** ML-KEM-1024 is IND-CCA2 
   (FO transform with implicit rejection); a tampered `ct_kem` 
   yields a different `ss_kem` and is also rebound through 

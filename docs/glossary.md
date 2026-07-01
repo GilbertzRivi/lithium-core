@@ -57,9 +57,9 @@ for `body` and `headers`. See [`kyberbox.md`](kyberbox.md).
 **Master Key (MK)** - the top key that encrypts `.keyf` files, 
 supplied by an MkProvider; rotated every hour.
 
-**MkProvider** - the pluggable source of the MK: 
-`PlainFileMkProvider` (file) or `TpmMkProvider` (sealed in the 
-TPM).
+**MkProvider** - the pluggable source of the MK. The one built-in 
+provider is `PlainFileMkProvider` (file); a caller that needs 
+hardware-backed storage implements its own.
 
 **MkRotator** - the background task that wakes every 30 s and 
 rotates the MK once the interval passes (3600 s by default).
@@ -73,7 +73,3 @@ hybrid.
 **PoW (proof-of-work)** - the `pow` helper: SHA-256 with a 
 required number of leading zero bits, used by the caller as 
 anti-spam.
-
-**TPM sealing** - sealing the Master Key in the TPM as a KEYEDHASH 
-object under an ECC P-256 parent derived from the owner seed (the 
-parent is never persisted). The `TpmMkProvider` path.

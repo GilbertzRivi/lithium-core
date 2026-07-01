@@ -37,12 +37,15 @@ pub fn verify(challenge: &[u8], nonce: u64, bits: u32) -> bool {
     leading_zero_bits(&h.finalize()) >= bits
 }
 
-pub fn solve(challenge: &[u8], bits: u32) -> u64 {
+pub fn try_solve(challenge: &[u8], bits: u32, max_iters: u64) -> Option<u64> {
     let mut nonce = 0u64;
-    while !verify(challenge, nonce, bits) {
+    for _ in 0..max_iters {
+        if verify(challenge, nonce, bits) {
+            return Some(nonce);
+        }
         nonce = nonce.wrapping_add(1);
     }
-    nonce
+    None
 }
 
 #[cfg(test)]
@@ -52,15 +55,21 @@ mod tests {
     #[test]
     fn solved_nonce_verifies() {
         let c = challenge(b"send-pow", b"mailbox", b"content");
-        let nonce = solve(&c, 12);
+        let nonce = try_solve(&c, 12, 1 << 20).unwrap();
         assert!(verify(&c, nonce, 12));
     }
 
     #[test]
     fn wrong_nonce_fails() {
         let c = challenge(b"send-pow", b"mailbox", b"content");
-        let nonce = solve(&c, 12);
+        let nonce = try_solve(&c, 12, 1 << 20).unwrap();
         assert!(!verify(&c, nonce.wrapping_add(1), 20));
+    }
+
+    #[test]
+    fn exhausted_budget_returns_none() {
+        let c = challenge(b"send-pow", b"mailbox", b"content");
+        assert!(try_solve(&c, 64, 8).is_none());
     }
 
     #[test]

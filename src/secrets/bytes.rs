@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 use core::fmt;
-use core::hash::{Hash, Hasher};
 use std::io;
 use subtle::ConstantTimeEq;
 use zeroize::Zeroize;
@@ -103,11 +102,6 @@ impl<const N: usize> PartialEq for FixedBytes<N> {
     }
 }
 impl<const N: usize> Eq for FixedBytes<N> {}
-impl<const N: usize> Hash for FixedBytes<N> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.as_slice().hash(state);
-    }
-}
 impl<const N: usize> fmt::Debug for FixedBytes<N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "FixedBytes<{}>(..)", N)
