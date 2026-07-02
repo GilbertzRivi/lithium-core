@@ -37,10 +37,10 @@ const DILI_PRIV: &str = "dilithium-mldsa87.keyf";
 
 const LEGACY_STATE_FILE: &str = "state.keyf";
 
-const KT_ED_SEED: &str = "ed25519-seed-v2";
-const KT_X_SEED: &str = "x25519-seed-v2";
-const KT_KYBER_SK: &str = "kyber-mlkem1024-sk-v2";
-const KT_DILI_SK: &str = "dilithium-mldsa87-sk-v2";
+const KT_ED_SEED: &str = "ed25519-seed-v1";
+const KT_X_SEED: &str = "x25519-seed-v1";
+const KT_KYBER_SK: &str = "kyber-mlkem1024-sk-v1";
+const KT_DILI_SK: &str = "dilithium-mldsa87-sk-v1";
 const KT_ROTATE_NEXT_OLD: &str = "rotate-next-mk-old-v1";
 const KT_ROTATE_NEXT_NEW: &str = "rotate-next-mk-new-v1";
 
