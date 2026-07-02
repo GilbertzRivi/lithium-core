@@ -4,15 +4,10 @@
 use crate::error::Result;
 use crate::secrets::{FixedBytes, MasterKey32, Nonce12, SecretBytes, SessionId32};
 use ed25519_dalek::SigningKey;
+use ml_dsa::{Generate, Keypair, MlDsa87, SigningKey as DsaSigningKey};
 use ml_kem::{
     MlKem1024,
     kem::{Kem, KeyExport as KemKeyExport},
-};
-use ml_dsa::{
-    Generate,
-    Keypair,
-    MlDsa87,
-    SigningKey as DsaSigningKey,
 };
 use rand::TryRng;
 use rand::rngs::SysRng;

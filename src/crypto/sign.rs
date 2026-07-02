@@ -8,23 +8,14 @@ use crate::{
 };
 
 use ed25519_dalek::{
-    Signature as Ed25519Signature,
-    Signer as Ed25519Signer,
-    SigningKey as Ed25519SigningKey,
+    Signature as Ed25519Signature, Signer as Ed25519Signer, SigningKey as Ed25519SigningKey,
     VerifyingKey as Ed25519VerifyingKey,
 };
 
 use ml_dsa::{
-    KeyInit,
-    MlDsa87,
-    Signature as MlDsaSignature,
-    SigningKey as MlDsaSigningKey,
+    KeyInit, MlDsa87, Signature as MlDsaSignature, SigningKey as MlDsaSigningKey,
     VerifyingKey as MlDsaVerifyingKey,
-    signature::{
-        SignatureEncoding,
-        Signer as MlDsaSigner,
-        Verifier as MlDsaVerifier,
-    },
+    signature::{SignatureEncoding, Signer as MlDsaSigner, Verifier as MlDsaVerifier},
 };
 
 pub fn sign_message<S: AsRef<[u8]>>(message: &[u8], priv_ed_seed: S) -> Result<SecretBytes> {

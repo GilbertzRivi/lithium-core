@@ -283,12 +283,7 @@ fn ensure_asymmetric_material(
         } else {
             let (sk_bytes, pk_bytes) = keys::random_kyber_mlkem1024_keypair()?;
 
-            keyfile::save_bytes_encrypted(
-                &priv_path,
-                mk,
-                sk_bytes.expose_as_slice(),
-                KT_KYBER_SK,
-            )?;
+            keyfile::save_bytes_encrypted(&priv_path, mk, sk_bytes.expose_as_slice(), KT_KYBER_SK)?;
             keyfile::write_secure(&pub_path, pk_bytes.expose_as_slice())?;
 
             pk_bytes
@@ -309,12 +304,7 @@ fn ensure_asymmetric_material(
         } else {
             let (sk_bytes, pk_bytes) = keys::random_dilithium_mldsa87_keypair()?;
 
-            keyfile::save_bytes_encrypted(
-                &priv_path,
-                mk,
-                sk_bytes.expose_as_slice(),
-                KT_DILI_SK,
-            )?;
+            keyfile::save_bytes_encrypted(&priv_path, mk, sk_bytes.expose_as_slice(), KT_DILI_SK)?;
             keyfile::write_secure(&pub_path, pk_bytes.expose_as_slice())?;
 
             pk_bytes

@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 use ml_kem::{
-    Ciphertext as MlKemCiphertext, DecapsulationKey1024, EncapsulationKey1024,
-    MlKem1024, Seed, TryKeyInit,
+    Ciphertext as MlKemCiphertext, DecapsulationKey1024, EncapsulationKey1024, MlKem1024, Seed,
+    TryKeyInit,
     kem::{Decapsulate, Encapsulate},
 };
 use sha2::{Digest, Sha256};
@@ -72,8 +72,8 @@ fn derive_base_key(
 }
 
 fn encapsulate_kem(peer_kyber_pub: &[u8]) -> Result<(Byte32, [u8; 32], SecretBytes)> {
-    let pk =
-        EncapsulationKey1024::new_from_slice(peer_kyber_pub).map_err(|_| LithiumError::internal())?;
+    let pk = EncapsulationKey1024::new_from_slice(peer_kyber_pub)
+        .map_err(|_| LithiumError::internal())?;
 
     let (ct_kem, ss) = pk.encapsulate();
 
@@ -115,8 +115,8 @@ fn decapsulate_kem(kyber_priv_bytes: &[u8], blob: &[u8]) -> Result<(Byte32, [u8;
 
     let sk = DecapsulationKey1024::from_seed(seed);
 
-    let ct = MlKemCiphertext::<MlKem1024>::try_from(ct_slice)
-        .map_err(|_| LithiumError::internal())?;
+    let ct =
+        MlKemCiphertext::<MlKem1024>::try_from(ct_slice).map_err(|_| LithiumError::internal())?;
 
     let ss = sk.decapsulate(&ct);
     let ss_bytes = Byte32::from_slice(ss.as_ref()).map_err(|_| LithiumError::internal())?;
