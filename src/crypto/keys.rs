@@ -4,10 +4,16 @@
 use crate::error::Result;
 use crate::secrets::{FixedBytes, MasterKey32, Nonce12, SecretBytes, SessionId32};
 use ed25519_dalek::SigningKey;
-use pqcrypto::kem::mlkem1024;
-use pqcrypto::sign::mldsa87;
-use pqcrypto::traits::kem::{PublicKey as _, SecretKey as _};
-use pqcrypto::traits::sign::{PublicKey as SignPub, SecretKey as SignSk};
+use ml_kem::{
+    MlKem1024,
+    kem::{Kem, KeyExport as KemKeyExport},
+};
+use ml_dsa::{
+    Generate,
+    Keypair,
+    MlDsa87,
+    SigningKey as DsaSigningKey,
+};
 use rand::TryRng;
 use rand::rngs::SysRng;
 use x25519_dalek::{PublicKey as XPublicKey, StaticSecret as XStaticSecret};
@@ -50,18 +56,27 @@ pub fn random_ed25519_keypair() -> Result<(FixedBytes<32>, FixedBytes<32>)> {
 
 #[inline]
 pub fn random_kyber_mlkem1024_keypair() -> Result<(SecretBytes, SecretBytes)> {
-    let (pk, sk) = mlkem1024::keypair();
+    let (sk, pk) = MlKem1024::generate_keypair();
+
+    let sk_bytes = sk.to_bytes();
+    let pk_bytes = pk.to_bytes();
+
     Ok((
-        SecretBytes::from_slice(sk.as_bytes()),
-        SecretBytes::from_slice(pk.as_bytes()),
+        SecretBytes::from_slice(sk_bytes.as_ref()),
+        SecretBytes::from_slice(pk_bytes.as_ref()),
     ))
 }
 
 #[inline]
 pub fn random_dilithium_mldsa87_keypair() -> Result<(SecretBytes, SecretBytes)> {
-    let (pk, sk) = mldsa87::keypair();
+    let sk = DsaSigningKey::<MlDsa87>::generate();
+    let pk = sk.verifying_key();
+
+    let sk_bytes = sk.to_bytes();
+    let pk_bytes = pk.to_bytes();
+
     Ok((
-        SecretBytes::from_slice(SignSk::as_bytes(&sk)),
-        SecretBytes::from_slice(SignPub::as_bytes(&pk)),
+        SecretBytes::from_slice(sk_bytes.as_ref()),
+        SecretBytes::from_slice(pk_bytes.as_ref()),
     ))
 }

@@ -1,14 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Lithium Project
 // SPDX-License-Identifier: AGPL-3.0-only
 
-use pqcrypto::kem::mlkem1024::{
-    Ciphertext as KyberCiphertext, PublicKey as KyberPublicKey, SecretKey as KyberSecretKey,
-    SharedSecret as KyberSharedSecret, decapsulate as kyber_decapsulate,
-    encapsulate as kyber_encapsulate,
-};
-use pqcrypto::traits::kem::{
-    Ciphertext as TraitKyberCiphertext, PublicKey as TraitKyberPublicKey,
-    SecretKey as TraitKyberSecretKey, SharedSecret as TraitKyberSharedSecret,
+use ml_kem::{
+    Ciphertext as MlKemCiphertext, DecapsulationKey1024, EncapsulationKey1024,
+    MlKem1024, Seed, TryKeyInit,
+    kem::{Decapsulate, Encapsulate},
 };
 use sha2::{Digest, Sha256};
 use x25519_dalek::{PublicKey as XPublicKey, StaticSecret as XStaticSecret};
@@ -76,14 +72,17 @@ fn derive_base_key(
 }
 
 fn encapsulate_kem(peer_kyber_pub: &[u8]) -> Result<(Byte32, [u8; 32], SecretBytes)> {
-    let pk = KyberPublicKey::from_bytes(peer_kyber_pub).map_err(|_| LithiumError::internal())?;
+    let pk =
+        EncapsulationKey1024::new_from_slice(peer_kyber_pub).map_err(|_| LithiumError::internal())?;
 
-    let (ss, ct_kem): (KyberSharedSecret, KyberCiphertext) = kyber_encapsulate(&pk);
-    let ss_bytes = Byte32::from_slice(ss.as_bytes()).map_err(|_| LithiumError::internal())?;
+    let (ct_kem, ss) = pk.encapsulate();
 
-    let ct_bytes = ct_kem.as_bytes();
+    let ct_bytes = ct_kem.as_slice();
+    let ss_bytes = Byte32::from_slice(ss.as_ref()).map_err(|_| LithiumError::internal())?;
+
+    let digest = Sha256::digest(ct_bytes);
     let mut ct_hash = [0u8; 32];
-    ct_hash.copy_from_slice(Sha256::digest(ct_bytes).as_slice());
+    ct_hash.copy_from_slice(&digest);
 
     let mut blob = Vec::with_capacity(2 + ct_bytes.len());
     blob.push(KYBER_BOX_VERSION);
@@ -100,15 +99,27 @@ fn decapsulate_kem(kyber_priv_bytes: &[u8], blob: &[u8]) -> Result<(Byte32, [u8;
     if blob[0] != KYBER_BOX_VERSION || blob[1] != KYBER_KEM_ID {
         return Err(LithiumError::internal());
     }
+
     let ct_slice = &blob[2..];
 
+    let digest = Sha256::digest(ct_slice);
     let mut ct_hash = [0u8; 32];
-    ct_hash.copy_from_slice(Sha256::digest(ct_slice).as_slice());
+    ct_hash.copy_from_slice(&digest);
 
-    let sk = KyberSecretKey::from_bytes(kyber_priv_bytes).map_err(|_| LithiumError::internal())?;
-    let ct = KyberCiphertext::from_bytes(ct_slice).map_err(|_| LithiumError::internal())?;
-    let ss: KyberSharedSecret = kyber_decapsulate(&ct, &sk);
-    let ss_bytes = Byte32::from_slice(ss.as_bytes()).map_err(|_| LithiumError::internal())?;
+    if kyber_priv_bytes.len() != 64 {
+        return Err(LithiumError::invalid_len(64, kyber_priv_bytes.len()));
+    }
+
+    let mut seed = Seed::default();
+    seed.copy_from_slice(kyber_priv_bytes);
+
+    let sk = DecapsulationKey1024::from_seed(seed);
+
+    let ct = MlKemCiphertext::<MlKem1024>::try_from(ct_slice)
+        .map_err(|_| LithiumError::internal())?;
+
+    let ss = sk.decapsulate(&ct);
+    let ss_bytes = Byte32::from_slice(ss.as_ref()).map_err(|_| LithiumError::internal())?;
 
     Ok((ss_bytes, ct_hash))
 }

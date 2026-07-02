@@ -6,10 +6,6 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use ed25519_dalek::SigningKey;
-use pqcrypto::kem::mlkem1024;
-use pqcrypto::sign::mldsa87;
-use pqcrypto::traits::kem::{PublicKey as _, SecretKey as _};
-use pqcrypto::traits::sign::{PublicKey as SignPub, SecretKey as SignSk};
 use x25519_dalek::{PublicKey as XPublicKey, StaticSecret as XStaticSecret};
 
 use crate::crypto::{aead, keys};
@@ -276,6 +272,7 @@ fn ensure_asymmetric_material(
     let kyber_pub = {
         let priv_path = priv_dir.join(KYBER_PRIV);
         let pub_path = pub_dir.join(KYBER_PUB);
+
         if priv_path.exists() && pub_path.exists() {
             let _ = keyfile::load_bytes_decrypted(&priv_path, mk, KT_KYBER_SK)?;
             read_pub_bytes(&pub_path)?
@@ -284,11 +281,16 @@ fn ensure_asymmetric_material(
                 "keystore_layout_inconsistent",
             ));
         } else {
-            let (pk, sk) = mlkem1024::keypair();
-            let sk_bytes = SecretBytes::from_slice(sk.as_bytes());
-            let pk_bytes = SecretBytes::from_slice(pk.as_bytes());
-            keyfile::save_bytes_encrypted(&priv_path, mk, sk_bytes.expose_as_slice(), KT_KYBER_SK)?;
+            let (sk_bytes, pk_bytes) = keys::random_kyber_mlkem1024_keypair()?;
+
+            keyfile::save_bytes_encrypted(
+                &priv_path,
+                mk,
+                sk_bytes.expose_as_slice(),
+                KT_KYBER_SK,
+            )?;
             keyfile::write_secure(&pub_path, pk_bytes.expose_as_slice())?;
+
             pk_bytes
         }
     };
@@ -296,6 +298,7 @@ fn ensure_asymmetric_material(
     let dili_pub = {
         let priv_path = priv_dir.join(DILI_PRIV);
         let pub_path = pub_dir.join(DILI_PUB);
+
         if priv_path.exists() && pub_path.exists() {
             let _ = keyfile::load_bytes_decrypted(&priv_path, mk, KT_DILI_SK)?;
             read_pub_bytes(&pub_path)?
@@ -304,11 +307,16 @@ fn ensure_asymmetric_material(
                 "keystore_layout_inconsistent",
             ));
         } else {
-            let (pk, sk) = mldsa87::keypair();
-            let sk_bytes = SecretBytes::from_slice(SignSk::as_bytes(&sk));
-            let pk_bytes = SecretBytes::from_slice(SignPub::as_bytes(&pk));
-            keyfile::save_bytes_encrypted(&priv_path, mk, sk_bytes.expose_as_slice(), KT_DILI_SK)?;
+            let (sk_bytes, pk_bytes) = keys::random_dilithium_mldsa87_keypair()?;
+
+            keyfile::save_bytes_encrypted(
+                &priv_path,
+                mk,
+                sk_bytes.expose_as_slice(),
+                KT_DILI_SK,
+            )?;
             keyfile::write_secure(&pub_path, pk_bytes.expose_as_slice())?;
+
             pk_bytes
         }
     };
