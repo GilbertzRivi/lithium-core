@@ -18,11 +18,6 @@ on:
     - cron: "0 6 * * 1"
 
 jobs:
-  # cargo-deny walks the real dependency graph (feature- and target-aware), so it
-  # only flags advisories in crates actually compiled in, and adds the bans,
-  # sources, and licenses checks. Accepted advisories (the archived PQClean
-  # crates) are listed with reasons in deny.toml; the license allow-list is
-  # deny-by-default, so a new copyleft dependency fails here.
   cargo-deny:
     runs-on: ubuntu-latest
     steps:
