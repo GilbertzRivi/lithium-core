@@ -5,9 +5,10 @@ keys come from, where they live, how long they last, and what they
 protect. All labels are pinned by tests
 (`registry_values_are_pinned`).
 
-`lithium_core` does not spawn a background rotator or own any long-running
-process. It provides the key manager and the crash-safe rotation primitive;
-the caller decides when to invoke rotation.
+`lithium_core`'s `KeyManager` does not spawn a background rotator or own any
+thread of its own. It provides the key manager and the crash-safe rotation
+primitive; the caller decides when to invoke rotation. (The unrelated
+`utils::store` helper does run its own background cleanup thread.)
 
 ## The `.keyf` wrapping
 

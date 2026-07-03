@@ -54,6 +54,25 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo doc --no-deps --all-features
 
+  # AddressSanitizer over the arena tests - arena.rs is the crate's only unsafe.
+  # gnu target so RUSTFLAGS instrument only target crates; nightly for -Zsanitizer.
+  asan:
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: -Zsanitizer=address
+      ASAN_OPTIONS: detect_leaks=0
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: x86_64-unknown-linux-gnu
+      - uses: Swatinem/rust-cache@v2
+      # Skip the VmLck-accounting test: the sanitizer's mmap interception zeroes it out.
+      - name: Arena unit tests under ASan
+        run: cargo +nightly test --lib --target x86_64-unknown-linux-gnu secrets::arena -- --skip arena_pages_are_actually_mlocked
+      - name: KeyManager arena integration tests under ASan
+        run: cargo +nightly test --test keymanager_arena_tests --target x86_64-unknown-linux-gnu
+
   # Smoke-run every fuzz target for a few seconds so a broken harness or an
   # immediate crash is caught in CI. cargo-fuzz needs nightly for the sanitizer.
   fuzz:

@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 use std::fs::{self, OpenOptions};
-use std::io::Write;
-use std::path::Path;
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use hkdf::Hkdf;
 use sha2::Sha256;
@@ -24,29 +25,49 @@ pub fn read_keyfile_bytes(path: &Path) -> Result<SecretBytes> {
     Ok(SecretBytes::new(fs::read(path).map_err(LithiumError::io)?))
 }
 
+static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
+fn create_private_tmp(path: &Path) -> Result<(fs::File, PathBuf)> {
+    for _ in 0..8 {
+        let suffix = keys::random_fixed::<8>()?;
+        let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
+        let tmp = path.with_extension(format!(
+            "tmp-{:x}-{:x}-{}",
+            std::process::id(),
+            seq,
+            hex::encode(suffix.as_slice())
+        ));
+
+        let mut opts = OpenOptions::new();
+        opts.write(true).create_new(true);
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+
+        match opts.open(&tmp) {
+            Ok(f) => return Ok((f, tmp)),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(LithiumError::io(e)),
+        }
+    }
+
+    Err(LithiumError::io(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "keyfile tmp name not unique",
+    )))
+}
+
 pub fn write_secure(path: &Path, data: &[u8]) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(LithiumError::io)?;
     }
 
-    let tmp = path.with_extension("tmp");
+    let (mut f, tmp) = create_private_tmp(path)?;
 
     let write_res = (|| -> Result<()> {
-        let f = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&tmp)
-            .map_err(LithiumError::io)?;
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            f.set_permissions(fs::Permissions::from_mode(0o600))
-                .map_err(LithiumError::io)?;
-        }
-
-        let mut f = f;
         f.write_all(data).map_err(LithiumError::io)?;
         f.sync_all().map_err(LithiumError::io)?;
         Ok(())
@@ -447,5 +468,25 @@ mod tests {
         assert_eq!(cw, ct_wrap.to_vec());
         assert_eq!(np, nonce_payload);
         assert_eq!(cp, ct_payload.to_vec());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_secure_creates_0600_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join(format!("lithium-keyfile-{}", std::process::id()));
+        let path = dir.join("secret.keyf");
+
+        write_secure(&path, b"top secret payload").unwrap();
+
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "keyfile must be owner-only");
+        assert_eq!(read_keyfile_bytes(&path).unwrap().expose_as_slice(), b"top secret payload");
+        assert!(fs::read_dir(&dir).unwrap().all(|e| {
+            e.unwrap().file_name().to_string_lossy() == "secret.keyf"
+        }), "no leftover tmp files");
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }

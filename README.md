@@ -12,8 +12,9 @@ as *either* one holds:
 * **Signatures** - Ed25519 + ML-DSA-87, both provided by `crypto::sign`
 * **KDF / passwords** - HKDF-SHA256, Argon2
 
-The crate is `#![forbid(unsafe_code)]`, secret types zeroize on drop, and all domain-separation
-labels are supplied by the caller - the crypto itself is application-agnostic.
+The crate is `#![deny(unsafe_code)]` (the only `unsafe` is confined to `secrets::arena`, which
+wraps `mlock`/`madvise`/`mmap` behind a safe API), secret types zeroize on drop, and all
+domain-separation labels are supplied by the caller - the crypto itself is application-agnostic.
 
 ## Two pillars
 

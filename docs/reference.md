@@ -287,8 +287,8 @@ KeyManager::start(base_dir, kind, mk_provider) -> Result<KeyManager<P>>
 KeyManager::start_plain(base_dir, kind) -> Result<KeyManager<PlainFileMkProvider>>
 
 // Access to private keys (callback pattern, loaded only for the call)
-manager.with_signing_keys(|ed_seed, dili_sk| { ... }) -> Result<R>
-manager.with_x25519_and_kyber_sk(|x_seed, kyber_sk| { ... }) -> Result<R>
+manager.with_signing_keys(|ed_seed: ArenaByte32, dili_sk: ArenaByte32| { ... }) -> Result<R>
+manager.with_x25519_and_kyber_sk(|x_seed: ArenaByte32, kyber_sk: ArenaByte64| { ... }) -> Result<R>
 
 // Public keys
 manager.public_keys() -> &PublicKeys
@@ -296,18 +296,18 @@ manager.public_keys() -> &PublicKeys
 // Derived secrets (label-based)
 manager.derive_secret32(label: &[u8]) -> Result<SecByte32>
 
-// JWT secret (rotated together with the MK)
-manager.jwt_secret() -> &SecByte32
-
 // Rotation
 manager.maybe_rotate_mk() -> Result<()>
 ```
 
-Key material is loaded only for the duration of the callback and 
-is not stored by `KeyManager` after use. The callback receives 
-owned secret values (`SecByte32`, `SecretBytes`); confinement is not 
-enforced by the type system, so the caller must not persist or 
-leak them past that scope.
+`KeyManager` owns a small `SecretArena` (see `secrets::arena`).
+Private keys are load-on-demand: the callback receives them as 
+arena-backed handles (`ArenaByte32`, `ArenaByte64`) decrypted 
+into locked memory for the call and dropped after. Confinement past 
+the callback is not enforced by the type system, so the caller must 
+not persist or leak them. The seeds themselves (ed25519/x25519/
+ML-KEM/ML-DSA - all 32/64-byte seeds) are generated born-locked from 
+the system CSRNG at first run.
 
 **`PublicKeys`:**
 
@@ -425,7 +425,49 @@ SecretJson::take_string(key) -> Result<SecretString>   // removes the field from
 SecretJson::with_exposed(|value| { ... }) -> R         // access to serde_json::Value
 ```
 
-#### Type aliases (`secrets::types`)
+#### `secrets::arena`: OS-locked memory for long-lived keys
+
+Per-value zeroize does not stop a secret from being swapped to disk 
+or captured in a core dump before it is cleared. `SecretArena` holds 
+long-lived key material in an `mmap` region that is `mlock`-ed (never 
+swapped) and `madvise(MADV_DONTDUMP)`-marked (excluded from core 
+dumps). A secret is *born* in the locked region, not locked after 
+the fact.
+
+The `SecretArena` allocator itself is `pub(crate)`; it is wired in by
+`KeyManager`, not driven directly by embedders. The public surface is
+the fixed-size handle type and its aliases, re-exported at `secrets`
+(`ArenaFixedBytes`, `ArenaByte32` = `ArenaFixedBytes<32>`, `ArenaByte64`
+= `ArenaFixedBytes<64>`, `harden_process`).
+
+```rust
+// SecretArena is pub(crate); shown here for context.
+SecretArena::with_capacity(bytes) -> Result<Self>
+
+arena.random_fixed::<N>() -> Result<ArenaFixedBytes<N>>          // filled from the CSRNG in place
+arena.store_fixed::<N>(&[u8; N]) -> Result<ArenaFixedBytes<N>>   // copy a fixed-size secret in
+arena.store_slice_fixed::<N>(&[u8]) -> Result<ArenaFixedBytes<N>>  // copy a slice, length-checked to N
+
+// ArenaFixedBytes<N> (and aliases ArenaByte32/ArenaByte64): Deref/DerefMut
+//   to [u8], zeroized-and-reused on drop, redacted Debug; as_slice()/
+//   as_mut_slice()/as_array() -> &[u8; N]/len(); ct_eq PartialEq.
+
+harden_process() -> Result<()>   // opt-in: PR_SET_DUMPABLE 0 + RLIMIT_CORE 0
+```
+
+Scope is genuinely long-lived keys only (master key, seeds, 
+ML-KEM/ML-DSA secret keys); ephemeral values 
+(nonces, HPKE shared secrets) are not worth the arena. `KeyManager` 
+wires it in: it born-locks every seed it generates and hands 
+`with_signing_keys` / 
+`with_x25519_and_kyber_sk` arena-backed handles. `harden_process()` 
+is opt-in and never called implicitly, since it sets process-global 
+state. The protection ceiling (a root attacker, register/stack 
+spills, cold-boot, a low `RLIMIT_MEMLOCK`, and the unavoidable heap 
+transit when AES-GCM-SIV decrypts a key or a PQ seed is expanded for 
+an operation) is detailed in [`threat-model.md`](threat-model.md).
+
+#### Type aliases (re-exported at `secrets`)
 
 ```rust
 pub type MasterKey32 = SecByte32;
@@ -474,21 +516,19 @@ PublicBytes::to_hex() -> String
 
 ### `passwords`: password handling
 
-#### Hashing (Argon2id)
+#### Argon2id parameters
 
-Standard parameters: 64 MB memory, 3 iterations, 1 thread, 32-byte 
-output.
-
-```rust
-hash_password_phc(password: &SecretString) -> Result<String>       // PHC string
-verify_password_phc(phc: &str, password: &SecretString) -> Result<bool>
-```
+The Argon2id cost profile (64 MB memory, 3 iterations, 1 lane, 
+32-byte output) is defined in `crypto::kdf` and reused by the OPAQUE 
+key-stretching function (`opaque::suite`). There is no standalone 
+password-hash API: password authentication goes through the OPAQUE 
+flow below, which never exposes or stores the password.
 
 #### Password validation
 
 ```rust
 pub struct PasswordPolicy {
-    pub min_len: usize,          // default: 8
+    pub min_len: usize,          // default: 12
     pub max_len: usize,          // default: 1024
     pub require_lowercase: bool, // default: true
     pub require_uppercase: bool, // default: true
@@ -612,10 +652,11 @@ store.take(key) -> Result<Option<SecretBytes>>   // read and remove
 store.del(key) -> Result<()>
 ```
 
-An internal task (`tokio::spawn`) sweeps expired entries every 500 
-ms. When an expired entry is removed, the `SecretBytes` content is 
-zeroized before `drop`. The task is aborted when the last 
-`EphemeralStoreManager` handle is dropped.
+A background `std::thread` proactively sweeps expired entries, 
+waking exactly at the next entry's expiry deadline (re-planned on 
+each insert), so an expired `SecretBytes` is zeroized as soon as it 
+lapses. The thread stops when the last `EphemeralStoreManager` 
+handle is dropped. The crate carries no async runtime dependency.
 
 ---
 
@@ -632,7 +673,7 @@ pub struct LithiumError {
 
 The `Display` message is always honest about the error kind; only the
 `source` chain is gated behind `LithiumError::is_verbose()`
-(`debug_assertions`). This library is not the oracle boundary — a caller
+(`debug_assertions`). This library is not the oracle boundary - a caller
 crossing a trust boundary (e.g. a network response an attacker can probe)
 must flatten distinguishable errors into coarse categories itself.
 
@@ -676,7 +717,9 @@ Selected `ErrorKind` variants:
 | `secrecy`       | 0.10.3      | Secret types (`SecretBox`)                 |
 | `rand`          | 0.10.0      | CSRNG (`SysRng`)                           |
 
-The whole crate is `#![forbid(unsafe_code)]`.
+The crate is `#![deny(unsafe_code)]`; the only `unsafe` is confined 
+to `secrets::arena` (the `mlock`/`madvise`/`mmap`/`prctl` FFI, added 
+via `libc`), behind a safe API.
 
 ---
 

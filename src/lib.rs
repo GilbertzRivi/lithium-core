@@ -5,8 +5,9 @@
 //!
 //! Every construction is hybrid classical + post-quantum: X25519 + ML-KEM-1024 for encryption,
 //! Ed25519 + ML-DSA-87 for signatures, AES-256-GCM-SIV / HKDF-SHA256 / Argon2 underneath. The
-//! crate is `#![forbid(unsafe_code)]`. All domain-separation labels are supplied by the caller,
-//! so the crypto stays application-agnostic.
+//! crate is `#![deny(unsafe_code)]`; the only `unsafe` backs [`secrets::SecretArena`], which wraps
+//! the `mlock`/`madvise`/`mmap` syscalls behind a safe API. All domain-separation labels are
+//! supplied by the caller, so the crypto stays application-agnostic.
 //!
 //! # Two pillars
 //!
@@ -27,10 +28,10 @@
 //! # Security status
 //!
 //! Not yet independently audited. The constructions, their hybrid-combiner rationale and the
-//! open questions for an auditor live under `docs/` (`combiner.md`, `lithium_core-threat-model.md`).
+//! open questions for an auditor live under `docs/` (`combiner.md`, `threat-model.md`).
 //!
 //! The public surface is intended to be stable through the audit; treat it as frozen at `0.1`.
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 
 /// Hybrid encryption pillar: KyberBox AEAD, dual signatures, and the AEAD/KDF/keypair primitives.
 pub mod crypto;

@@ -5,17 +5,16 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use ed25519_dalek::SigningKey;
-use x25519_dalek::{PublicKey as XPublicKey, StaticSecret as XStaticSecret};
-
 use crate::crypto::{aead, keys};
 use crate::error::{LithiumError, Result};
 use crate::public::{PubByte32, PublicBytes};
-use crate::secrets::{MasterKey32, SecByte32, SecretBytes};
+use crate::secrets::{ArenaByte32, ArenaByte64, MasterKey32, SecByte32, SecretArena, SecretBytes};
 
 use super::keyfile;
 
 const DEFAULT_ROTATE_EVERY: Duration = Duration::from_secs(3600);
+
+const ARENA_CAPACITY: usize = 8 * 1024;
 
 const PUB_DIR: &str = "pub";
 const PRIV_DIR: &str = "priv";
@@ -111,7 +110,7 @@ pub struct KeyManager<P: MkProvider> {
     rotate_dir: PathBuf,
     mk_provider: P,
     public_keys: PublicKeys,
-    jwt_secret: SecByte32,
+    arena: SecretArena,
     rotate_every: Duration,
     next_rotation_at: Instant,
 }
@@ -178,19 +177,22 @@ fn load_public_cache(pub_dir: &Path) -> Result<PublicKeys> {
     })
 }
 
-fn ensure_secret32_keyfile(
+fn ensure_seed32_born_locked(
+    arena: &SecretArena,
     path: &Path,
     mk: &MasterKey32,
     key_type: &str,
-    generator: impl FnOnce() -> Result<SecByte32>,
-) -> Result<SecByte32> {
+    pub_from_seed: impl FnOnce(&[u8; 32]) -> PubByte32,
+) -> Result<PubByte32> {
     if path.exists() {
-        return keyfile::load_secret32_decrypted(path, mk, key_type);
+        let seed = keyfile::load_secret32_decrypted(path, mk, key_type)?;
+        return Ok(pub_from_seed(seed.as_array()));
     }
 
-    let v = generator()?;
-    keyfile::save_secret32_encrypted(path, mk, &v, key_type)?;
-    Ok(v)
+    let seed = arena.random_fixed::<32>()?;
+    let pk = pub_from_seed(seed.as_array());
+    keyfile::save_bytes_encrypted(path, mk, seed.as_slice(), key_type)?;
+    Ok(pk)
 }
 
 fn label_hex(label: &[u8]) -> String {
@@ -244,40 +246,32 @@ fn load_or_create_label_bytes(
     Ok(v)
 }
 
-fn derive_ed25519_pub(seed: &SecByte32) -> PubByte32 {
-    let sk = SigningKey::from_bytes(seed.as_array());
-    PubByte32::new(sk.verifying_key().to_bytes())
-}
-
-fn derive_x25519_pub(seed: &SecByte32) -> PubByte32 {
-    let sk = XStaticSecret::from(*seed.as_array());
-    let pk = XPublicKey::from(&sk);
-    PubByte32::new(pk.to_bytes())
-}
-
 fn ensure_asymmetric_material(
     pub_dir: &Path,
     priv_dir: &Path,
     mk: &MasterKey32,
+    arena: &SecretArena,
 ) -> Result<PublicKeys> {
     fs::create_dir_all(pub_dir).map_err(LithiumError::io)?;
     fs::create_dir_all(priv_dir).map_err(LithiumError::io)?;
 
-    let ed_seed = ensure_secret32_keyfile(
+    let ed25519 = ensure_seed32_born_locked(
+        arena,
         &priv_dir.join(ED_PRIV),
         mk,
         KT_ED_SEED,
-        keys::random_fixed::<32>,
+        keys::ed25519_pub_from_seed,
     )?;
 
-    let x_seed = ensure_secret32_keyfile(
+    let x25519 = ensure_seed32_born_locked(
+        arena,
         &priv_dir.join(X_PRIV),
         mk,
         KT_X_SEED,
-        keys::random_fixed::<32>,
+        keys::x25519_pub_from_seed,
     )?;
 
-    let kyber_pub = {
+    let kyber = {
         let priv_path = priv_dir.join(KYBER_PRIV);
         let pub_path = pub_dir.join(KYBER_PUB);
 
@@ -289,16 +283,15 @@ fn ensure_asymmetric_material(
                 "keystore_layout_inconsistent",
             ));
         } else {
-            let (sk_bytes, pk_bytes) = keys::random_kyber_mlkem1024_keypair()?;
-
-            keyfile::save_bytes_encrypted(&priv_path, mk, sk_bytes.expose_as_slice(), KT_KYBER_SK)?;
+            let seed = arena.random_fixed::<64>()?;
+            let pk_bytes = keys::mlkem1024_pub_from_seed(seed.as_slice())?;
+            keyfile::save_bytes_encrypted(&priv_path, mk, seed.as_slice(), KT_KYBER_SK)?;
             keyfile::write_secure(&pub_path, pk_bytes.as_slice())?;
-
             pk_bytes
         }
     };
 
-    let dili_pub = {
+    let dilithium = {
         let priv_path = priv_dir.join(DILI_PRIV);
         let pub_path = pub_dir.join(DILI_PUB);
 
@@ -310,20 +303,19 @@ fn ensure_asymmetric_material(
                 "keystore_layout_inconsistent",
             ));
         } else {
-            let (sk_bytes, pk_bytes) = keys::random_dilithium_mldsa87_keypair()?;
-
-            keyfile::save_bytes_encrypted(&priv_path, mk, sk_bytes.expose_as_slice(), KT_DILI_SK)?;
+            let seed = arena.random_fixed::<32>()?;
+            let pk_bytes = keys::mldsa87_pub_from_seed(seed.as_slice())?;
+            keyfile::save_bytes_encrypted(&priv_path, mk, seed.as_slice(), KT_DILI_SK)?;
             keyfile::write_secure(&pub_path, pk_bytes.as_slice())?;
-
             pk_bytes
         }
     };
 
     let pks = PublicKeys {
-        ed25519: derive_ed25519_pub(&ed_seed),
-        x25519: derive_x25519_pub(&x_seed),
-        kyber: kyber_pub,
-        dilithium: dili_pub,
+        ed25519,
+        x25519,
+        kyber,
+        dilithium,
     };
 
     sync_public_cache(pub_dir, &pks)?;
@@ -546,8 +538,8 @@ impl<P: MkProvider> KeyManager<P> {
 
         let root_mk = mk_provider.load_mk()?;
 
-        let public_keys = ensure_asymmetric_material(&pub_dir, &priv_dir, &root_mk)?;
-        let jwt_secret = keys::random_32()?;
+        let arena = SecretArena::with_capacity(ARENA_CAPACITY)?;
+        let public_keys = ensure_asymmetric_material(&pub_dir, &priv_dir, &root_mk, &arena)?;
 
         Ok(Self {
             root_dir,
@@ -557,7 +549,7 @@ impl<P: MkProvider> KeyManager<P> {
             rotate_dir,
             mk_provider,
             public_keys,
-            jwt_secret,
+            arena,
             rotate_every: DEFAULT_ROTATE_EVERY,
             next_rotation_at: Instant::now() + DEFAULT_ROTATE_EVERY,
         })
@@ -574,10 +566,6 @@ impl<P: MkProvider> KeyManager<P> {
 
     pub fn public_keys(&self) -> &PublicKeys {
         &self.public_keys
-    }
-
-    pub fn jwt_secret(&self) -> &SecByte32 {
-        &self.jwt_secret
     }
 
     pub fn set_rotate_interval(&mut self, interval: Duration) {
@@ -632,25 +620,33 @@ impl<P: MkProvider> KeyManager<P> {
 
     pub fn with_signing_keys<R>(
         &self,
-        f: impl FnOnce(SecByte32, SecretBytes) -> Result<R>,
+        f: impl FnOnce(ArenaByte32, ArenaByte32) -> Result<R>,
     ) -> Result<R> {
         let mk = self.mk_provider.load_mk()?;
         let ed_seed =
             keyfile::load_secret32_decrypted(&self.priv_dir.join(ED_PRIV), &mk, KT_ED_SEED)?;
         let dili_sk =
             keyfile::load_bytes_decrypted(&self.priv_dir.join(DILI_PRIV), &mk, KT_DILI_SK)?;
-        f(ed_seed, dili_sk)
+        let ed_locked = self.arena.store_fixed::<32>(ed_seed.as_array())?;
+        let dili_locked = self.arena.store_slice_fixed::<32>(dili_sk.expose_as_slice())?;
+        drop(ed_seed);
+        drop(dili_sk);
+        f(ed_locked, dili_locked)
     }
 
     pub fn with_x25519_and_kyber_sk<R>(
         &self,
-        f: impl FnOnce(SecByte32, SecretBytes) -> Result<R>,
+        f: impl FnOnce(ArenaByte32, ArenaByte64) -> Result<R>,
     ) -> Result<R> {
         let mk = self.mk_provider.load_mk()?;
         let x_seed = keyfile::load_secret32_decrypted(&self.priv_dir.join(X_PRIV), &mk, KT_X_SEED)?;
         let kyber_sk =
             keyfile::load_bytes_decrypted(&self.priv_dir.join(KYBER_PRIV), &mk, KT_KYBER_SK)?;
-        f(x_seed, kyber_sk)
+        let x_locked = self.arena.store_fixed::<32>(x_seed.as_array())?;
+        let kyber_locked = self.arena.store_slice_fixed::<64>(kyber_sk.expose_as_slice())?;
+        drop(x_seed);
+        drop(kyber_sk);
+        f(x_locked, kyber_locked)
     }
 
     pub fn maybe_rotate_mk(&mut self) -> Result<()> {
@@ -685,10 +681,30 @@ impl<P: MkProvider> KeyManager<P> {
 
         apply_staged_files(&self.rotate_dir, &targets)?;
         self.mk_provider.store_mk(&new_mk)?;
-        self.jwt_secret = keys::random_32()?;
         self.next_rotation_at = Instant::now() + self.rotate_every;
 
         cleanup_rotation_dir(&self.rotate_dir)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn registry_values_are_pinned() {
+        assert_eq!(KT_ED_SEED, "ed25519-seed-v1");
+        assert_eq!(KT_X_SEED, "x25519-seed-v1");
+        assert_eq!(KT_KYBER_SK, "kyber-mlkem1024-sk-v1");
+        assert_eq!(KT_DILI_SK, "dilithium-mldsa87-sk-v1");
+        assert_eq!(KT_ROTATE_NEXT_OLD, "rotate-next-mk-old-v1");
+        assert_eq!(KT_ROTATE_NEXT_NEW, "rotate-next-mk-new-v1");
+        assert_eq!(label_key_type(b"ab"), "secret32:6162");
+
+        assert_eq!(ED_PRIV, "ed25519.keyf");
+        assert_eq!(X_PRIV, "x25519.keyf");
+        assert_eq!(KYBER_PRIV, "kyber-mlkem1024.keyf");
+        assert_eq!(DILI_PRIV, "dilithium-mldsa87.keyf");
     }
 }
