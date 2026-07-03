@@ -6,15 +6,21 @@
 use std::sync::OnceLock;
 
 use libfuzzer_sys::fuzz_target;
+use lithium_core::crypto::context::Context;
 use lithium_core::hpke::{self, HpkeEnc, HpkePrivateKey};
 use lithium_core::public::PublicBytes;
 
 static SETUP: OnceLock<(HpkePrivateKey, HpkeEnc)> = OnceLock::new();
+static CTX: OnceLock<Context<'static>> = OnceLock::new();
+
+fn ctx() -> &'static Context<'static> {
+    CTX.get_or_init(|| Context::base("fuzz").unwrap())
+}
 
 fn setup() -> &'static (HpkePrivateKey, HpkeEnc) {
     SETUP.get_or_init(|| {
-        let (sk, pk) = hpke::derive_keypair("fuzz", b"fuzz-recipient").unwrap();
-        let (enc, _sender) = hpke::setup_sender("fuzz", &pk, b"info").unwrap();
+        let (sk, pk) = hpke::derive_keypair(ctx(), b"fuzz-recipient").unwrap();
+        let (enc, _sender) = hpke::setup_sender(ctx(), &pk, b"info").unwrap();
         (sk, enc)
     })
 }
@@ -24,7 +30,7 @@ fuzz_target!(|data: &[u8]| {
         return;
     }
     let (sk, enc) = setup();
-    let Ok(mut receiver) = hpke::setup_receiver("fuzz", sk, enc, b"info") else {
+    let Ok(mut receiver) = hpke::setup_receiver(ctx(), sk, enc, b"info") else {
         return;
     };
     let split = (data[0] as usize % data.len()).min(data.len() - 1);

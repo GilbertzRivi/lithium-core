@@ -6,15 +6,21 @@
 use std::sync::OnceLock;
 
 use libfuzzer_sys::fuzz_target;
+use lithium_core::crypto::context::Context;
 use lithium_core::hpke::{self, HpkeEnc, HpkeSealed};
 use lithium_core::public::PublicBytes;
 use lithium_core::secrets::{SecByte32, SecretBytes};
 
 static SK: OnceLock<(SecByte32, SecretBytes)> = OnceLock::new();
+static CTX: OnceLock<Context<'static>> = OnceLock::new();
+
+fn ctx() -> &'static Context<'static> {
+    CTX.get_or_init(|| Context::base("fuzz").unwrap())
+}
 
 fn sk() -> &'static (SecByte32, SecretBytes) {
     SK.get_or_init(|| {
-        let (sk, _) = hpke::derive_keypair("fuzz", b"fuzz-recipient").unwrap();
+        let (sk, _) = hpke::derive_keypair(ctx(), b"fuzz-recipient").unwrap();
         let w = sk.to_wire();
         let w = w.expose_as_slice();
         (
@@ -37,5 +43,5 @@ fuzz_target!(|data: &[u8]| {
         enc,
         ciphertext: PublicBytes::from_slice(&data[mid..]),
     };
-    let _ = hpke::open_base("fuzz", x_priv, k_priv, b"info", b"aad", &sealed);
+    let _ = hpke::open_base(ctx(), x_priv, k_priv, b"info", b"aad", &sealed);
 });

@@ -177,7 +177,7 @@ pub(crate) fn prep_base_key_for_decryption(
     Ok(base_key)
 }
 
-// The 0x00 matters; label is NUL-free, concat bare, and you can bypass the Context.
+// The 0x00 matters so you can’t bypass / can’t confuse / cannot impersonate another context.
 fn data_aad(ctx: &Context, aad: &[u8]) -> Result<Vec<u8>> {
     let mut framed = ctx.add("data")?.label().as_slice().to_vec();
     if !aad.is_empty() {

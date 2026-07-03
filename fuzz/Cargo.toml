@@ -60,13 +60,6 @@ doc = false
 bench = false
 
 [[bin]]
-name = "pow_verify"
-path = "fuzz_targets/pow_verify.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
 name = "hpke_wire"
 path = "fuzz_targets/hpke_wire.rs"
 test = false
