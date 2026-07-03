@@ -16,7 +16,7 @@ pub struct HpkeEnc {
     pub(crate) kem_ct: PublicBytes,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct HpkeContext {
     pub(crate) key: SecByte32,
     pub(crate) base_nonce: Nonce12,

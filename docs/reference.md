@@ -175,10 +175,11 @@ The full construction, properties, and open questions:
 
 ### `hpke`: hybrid HPKE-style seal / open and export
 
-An HPKE-style single-shot layer built on the same hybrid KEM as
+An HPKE-style layer built on the same hybrid KEM as
 `kyberbox` (X25519 + ML-KEM-1024). It adds a deterministic keypair
-derivation, a base-mode `seal`/`open`, and a secret-export mode. Only
-the base (unauthenticated-sender) mode is provided.
+derivation, a base-mode `seal`/`open`, a multi-message context, and a
+secret-export mode. Only the base (unauthenticated-sender) mode is
+provided.
 
 ```
 derive_keypair(ctx, ikm) -> (HpkePrivateKey, HpkePublicKey)   // deterministic from ikm
@@ -187,6 +188,12 @@ seal_base(ctx, recipient_x_pub: &PubByte32, recipient_k_pub: &PublicBytes,
           info, aad, plaintext: &SecretBytes) -> HpkeSealed
 open_base(ctx, recipient_x_priv: &SecByte32, recipient_k_priv: &SecretBytes,
           info, aad, sealed: &HpkeSealed) -> SecretBytes
+
+// Multi-message: one KEM setup, then many messages under a sequence nonce.
+setup_sender(ctx, recipient_pk: &HpkePublicKey, info) -> (HpkeEnc, HpkeSenderContext)
+setup_receiver(ctx, recipient_sk: &HpkePrivateKey, enc: &HpkeEnc, info) -> HpkeReceiverContext
+HpkeSenderContext::seal(&mut self, aad, plaintext: &SecretBytes) -> PublicBytes
+HpkeReceiverContext::open(&mut self, aad, ciphertext: &PublicBytes) -> SecretBytes
 
 setup_sender_and_export(ctx, recipient_pk: &HpkePublicKey,
                         info, exporter_context, exporter_length) -> (HpkeEnc, SecretBytes)
@@ -199,6 +206,15 @@ the same seed always yields the same keypair. `info` binds the key
 schedule; `aad` binds the AEAD. The export mode derives an
 independent shared secret of `exporter_length` bytes and never fails
 authentication (a mismatch simply yields a different secret).
+
+The multi-message context (RFC 9180 section 5.2) runs the hybrid KEM once and
+then seals each message under nonce `base_nonce XOR seq`, incrementing
+`seq` per call on both sides. Sender and receiver must stay in lockstep:
+message N opens only when the receiver is at sequence N. A dropped or
+reordered message desynchronizes the stream, so the caller supplies
+ordering and any truncation protection (a chunked "streaming AEAD" over
+large data is built on top: export a secret with `setup_sender_and_export`
+and drive `crypto::aead` directly).
 
 Wire types (public material is public-typed; ciphertext is
 `PublicBytes`):
@@ -299,6 +315,12 @@ manager.derive_secret32(label: &[u8]) -> Result<SecByte32>
 // Rotation
 manager.maybe_rotate_mk() -> Result<()>
 ```
+
+`start` takes an exclusive advisory lock on `<store>/.lock`, held for the
+manager's lifetime, so exactly one instance drives a store directory; a
+second `start` on the same directory returns `keystore_locked`. This is a
+single-writer contract on a local filesystem (`flock` is unreliable over
+NFS); scaling out means one store directory per instance, not sharing one.
 
 `KeyManager` owns a small `SecretArena` (see `secrets::arena`).
 Private keys are load-on-demand: the callback receives them as 

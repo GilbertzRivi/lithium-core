@@ -149,6 +149,11 @@ impl LithiumError {
     }
 
     #[inline]
+    pub fn keystore_locked() -> Self {
+        Self::new(ErrorKind::KeystoreLocked)
+    }
+
+    #[inline]
     pub fn invalid_credentials(msg: &'static str) -> Self {
         Self::new(ErrorKind::InvalidCredentials { msg })
     }
@@ -263,6 +268,7 @@ pub enum ErrorKind {
         msg: &'static str,
     },
     MalformedKeyfile,
+    KeystoreLocked,
     EnvMissing {
         name: &'static str,
     },
@@ -314,6 +320,9 @@ impl fmt::Display for ErrorKind {
             ErrorKind::InvalidCredentials { msg } => write!(f, "invalid credentials: {msg}"),
             ErrorKind::InvalidPermissions { msg } => write!(f, "permission denied: {msg}"),
             ErrorKind::MalformedKeyfile => write!(f, "malformed keyfile"),
+            ErrorKind::KeystoreLocked => {
+                write!(f, "keystore already locked by another instance")
+            }
             ErrorKind::EnvMissing { name } => write!(f, "missing environment variable: {name}"),
             ErrorKind::EnvInvalid { name } => write!(f, "invalid environment variable: {name}"),
             ErrorKind::StateMissing { name } => write!(f, "missing state: {name}"),

@@ -16,6 +16,8 @@ const DEFAULT_ROTATE_EVERY: Duration = Duration::from_secs(3600);
 
 const ARENA_CAPACITY: usize = 8 * 1024;
 
+const LOCK_FILE: &str = ".lock";
+
 const PUB_DIR: &str = "pub";
 const PRIV_DIR: &str = "priv";
 const SECRETS_DIR: &str = "secrets";
@@ -111,6 +113,8 @@ pub struct KeyManager<P: MkProvider> {
     mk_provider: P,
     public_keys: PublicKeys,
     arena: SecretArena,
+    #[allow(dead_code)]
+    lock_file: fs::File,
     rotate_every: Duration,
     next_rotation_at: Instant,
 }
@@ -120,6 +124,20 @@ struct RewrapTarget {
     live_path: PathBuf,
     relative_path: PathBuf,
     key_type: String,
+}
+
+fn acquire_exclusive_lock(root_dir: &Path) -> Result<fs::File> {
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(root_dir.join(LOCK_FILE))
+        .map_err(LithiumError::io)?;
+    match file.try_lock() {
+        Ok(()) => Ok(file),
+        Err(fs::TryLockError::WouldBlock) => Err(LithiumError::keystore_locked()),
+        Err(fs::TryLockError::Error(e)) => Err(LithiumError::io(e)),
+    }
 }
 
 #[inline]
@@ -513,6 +531,8 @@ impl<P: MkProvider> KeyManager<P> {
         fs::create_dir_all(&priv_dir).map_err(LithiumError::io)?;
         fs::create_dir_all(&secrets_dir).map_err(LithiumError::io)?;
 
+        let lock_file = acquire_exclusive_lock(&root_dir)?;
+
         match mk_provider.load_mk() {
             Ok(_) => {}
             Err(e) if e.is_not_found() => {
@@ -550,6 +570,7 @@ impl<P: MkProvider> KeyManager<P> {
             mk_provider,
             public_keys,
             arena,
+            lock_file,
             rotate_every: DEFAULT_ROTATE_EVERY,
             next_rotation_at: Instant::now() + DEFAULT_ROTATE_EVERY,
         })
