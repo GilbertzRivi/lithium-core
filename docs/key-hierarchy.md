@@ -1,66 +1,109 @@
 # Key catalog and hierarchy
 
-The at-rest key management that `lithium_core` provides: where the 
-keys come from, where they live, how long they last, and what they 
-protect. All labels are pinned by tests 
+The at-rest key management that `lithium_core` provides: where the
+keys come from, where they live, how long they last, and what they
+protect. All labels are pinned by tests
 (`registry_values_are_pinned`).
+
+`lithium_core` does not spawn a background rotator or own any long-running
+process. It provides the key manager and the crash-safe rotation primitive;
+the caller decides when to invoke rotation.
 
 ## The `.keyf` wrapping
 
-```
-master key (from MkProvider) -> KEK = HKDF(MK, file_salt, "kek/v1") -> DEK (random per file) -> payload (private keys / secrets)
+```text id="9x3p2k"
+master key (from MkProvider)
+  -> KEK = HKDF(MK, file_salt, info="kek/v1")
+  -> DEK = random 32-byte key per .keyf file
+  -> payload = private key / secret stored in that file
 ```
 
-Double wrapping: the payload is sealed under a per-file DEK, and 
-the DEK is sealed under the KEK derived from the master key. The 
-master key never touches the payload directly.
+Double wrapping: the payload is sealed under a per-file DEK, and the DEK is
+sealed under the KEK derived from the master key. The master key is not used
+directly as the payload encryption key.
 
 ## At-rest keys
 
-| Key | Type | Derivation / source | Storage | Lifetime / rotation | Protects |
-|-----|------|--------------------|---------|--------------------|----------|
-| Master Key (MK) | 32 B random | supplied/sealed by an `MkProvider` (see below) | provider-specific (see below) | rotated every 1 h (`MkRotator`, 30 s tick) | every `.keyf` file (through the KEK) |
-| KEK | 32 B | `HKDF(MK, file_salt, info="kek/v1")` | not stored (derived on use) | with the MK | wrapping the DEK in a `.keyf` |
-| `.keyf` DEK | 32 B random | random per file | in the `.keyf`, wrapped under the KEK | rewrapped on MK rotation (value unchanged) | the key/secret payload in the file |
+| Key             | Type        | Derivation / source                  | Storage                               | Lifetime / rotation                                                                                  | Protects                           |
+| --------------- | ----------- | ------------------------------------ | ------------------------------------- | ---------------------------------------------------------------------------------------------------- | ---------------------------------- |
+| Master Key (MK) | 32 B random | supplied/sealed by an `MkProvider`   | provider-specific                     | rotated when the caller invokes `KeyManager::maybe_rotate_mk()` after the configured interval passes | every `.keyf` file through the KEK |
+| KEK             | 32 B        | `HKDF(MK, file_salt, info="kek/v1")` | not stored; derived on use            | changes when the MK changes                                                                          | wrapping the DEK in a `.keyf`      |
+| `.keyf` DEK     | 32 B random | random per file                      | in the `.keyf`, wrapped under the KEK | rewrapped on MK rotation; value unchanged                                                            | the key/secret payload in the file |
 
-The caller can also derive application-specific 32-byte secrets 
-straight from the MK with its own label (`derive_secret32(label)`); 
-those outputs and their labels are the caller's responsibility.
+The caller can also derive application-specific 32-byte secrets straight from
+the MK with its own label (`derive_secret32(label)`). Those outputs and their
+labels are the caller's responsibility.
 
 ## MkProvider
 
-The master key source is a trait, `MkProvider`, so the storage of 
-the MK is the caller's choice:
+The master key source is a trait, `MkProvider`, so the storage and protection
+of the MK are the caller's choice:
 
-- **`PlainFileMkProvider`** is the one built-in provider. The MK 
-  lives in a file. This is the plain provider: it offers no 
-  protection beyond the file's own permissions, so the caller is 
-  expected to wrap it, for example 
-  `AES-256-GCM-SIV(MK, Argon2id(passphrase, salt), aad="lithium/mkfile/v1")` 
-  stored at `keystore/user/mk.enc`.
-- A caller that needs hardware-backed protection implements its 
-  own `MkProvider` (for example sealing the MK into a secure 
-  element or TPM) and passes it to `KeyManager::start`. The library 
-  never sees the MK except through `load_mk`/`store_mk`.
+* **`PlainFileMkProvider`** is the one built-in provider. The MK lives in a
+  file. This is the plain provider: it offers no protection beyond the file's
+  own permissions, so a production caller is expected to wrap or seal the MK
+  before handing it to the library.
+* A caller that needs password-backed, hardware-backed, TPM-backed, or other
+  application-specific protection implements its own `MkProvider` and passes it
+  to `KeyManager::start`.
+* The library only accesses the MK through `load_mk` and `store_mk`.
+
+Example caller-side wrapping strategy:
+
+```text id="q1d8kz"
+AES-256-GCM-SIV(
+    MK,
+    key = Argon2id(passphrase, salt),
+    aad = "lithium/mkfile/v1"
+) -> keystore/user/mk.enc
+```
+
+That wrapping is intentionally outside `lithium_core`; the core library only
+requires an `MkProvider`.
 
 ## Rotation
 
-`MkRotator` wakes every 30 s and rotates the MK once the interval 
-passes (1 h by default). Rotation rewraps each `.keyf` DEK under 
-the new MK; the DEK values themselves don't change, so the payload 
-is untouched. The rewrap is crash-safe.
+`KeyManager` supports crash-safe MK rotation, but it does not run a background
+task on its own. The caller is expected to call `maybe_rotate_mk()` periodically
+from its own daemon, service loop, timer, or application lifecycle.
+
+By default, the rotation interval is 1 hour. The caller may override it with
+`set_rotate_interval(...)`.
+
+Rotation rewraps each `.keyf` DEK under a KEK derived from the new MK. The DEK
+values themselves do not change, so the encrypted payloads are not decrypted and
+rewritten under new DEKs; only the DEK wrapping changes.
+
+The rotation protocol is crash-safe:
+
+1. Create the rotation staging directory.
+2. Generate a new MK.
+3. Store enough rotation state to recover after a crash.
+4. Rewrap every `.keyf` DEK into staged files.
+5. Write the ready marker.
+6. Apply staged files to their live paths.
+7. Store the new MK through the `MkProvider`.
+8. Remove the rotation staging directory.
+
+On startup, `KeyManager` checks for an unfinished rotation and either completes
+or cleans it up before loading the key material.
 
 ## Secret types
 
-`SecByte32`, `SecretBytes`, `SecretString`, `MasterKey32` all zeroize 
-on drop, so key material doesn't linger in process memory after 
-use.
+`SecByte32`, `SecretBytes`, `SecretString`, and `MasterKey32` zeroize on drop,
+so key material does not intentionally linger in process memory after use.
+
+This is process-local hygiene, not a defense against a local attacker that can
+read the process memory while the process is running.
 
 ## At-rest leak analysis
 
 What the library's at-rest protection holds against:
 
-| Compromise | What's exposed | What's still protected |
-|------------|----------------|------------------------|
-| The disk alone, without the MK (or whatever the `MkProvider` guards it with) | nothing, `.keyf` files are encrypted | all key material |
-| Breaking ML-KEM **or** X25519 on its own | nothing, the other half of the hybrid still holds | message content (both must break) |
+| Compromise                                                                          | What's exposed                                             | What's still protected                           |
+| ----------------------------------------------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------ |
+| Disk alone, without the MK or whatever the `MkProvider` uses to guard it            | public keys and encrypted `.keyf` blobs                    | private keys and sealed secrets                  |
+| Disk plus `PlainFileMkProvider` MK file                                             | all `.keyf` payloads can be decrypted                      | nothing protected by that MK                     |
+| Disk plus a properly sealed MK provider, but without the provider's unlock material | public keys and encrypted `.keyf` blobs                    | private keys and sealed secrets                  |
+| One old MK after a successful rotation                                              | `.keyf` files that were copied before the rotation         | current `.keyf` files rewrapped under the new MK |
+| Breaking ML-KEM **or** X25519 on its own                                            | no message content from the hybrid encryption construction | message content, as both branches are required   |
