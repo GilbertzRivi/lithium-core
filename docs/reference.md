@@ -744,24 +744,6 @@ key for `opaque::dek` wrapping.
 
 ---
 
-### `pow`: proof of work
-
-A SHA-256 hashcash-style proof of work, used to rate-limit sending.
-
-```
-challenge(ctx, mailbox, content) -> [u8; 32]     // SHA-256(ctx || len(mailbox) || mailbox || content)
-verify(challenge, nonce, bits) -> bool           // SHA-256(challenge || nonce_le) has >= bits leading zero bits
-try_solve(challenge, bits, max_iters) -> Option<u64>   // brute-force a nonce from 0, up to max_iters
-
-DEFAULT_SEND_POW_BITS: u32 = 18
-```
-
-`bits == 0` accepts any nonce (`verify` returns true, `try_solve`
-returns `Some(0)`). `try_solve` returns `None` once `max_iters` is
-exhausted.
-
----
-
 ### `utils`: helpers
 
 #### `utils::store`: `EphemeralStoreManager`
