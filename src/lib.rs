@@ -5,9 +5,9 @@
 //!
 //! Every construction is hybrid classical + post-quantum: X25519 + ML-KEM-1024 for encryption,
 //! Ed25519 + ML-DSA-87 for signatures, AES-256-GCM-SIV / HKDF-SHA256 / Argon2 underneath. The
-//! crate is `#![deny(unsafe_code)]`; the only `unsafe` backs [`secrets::SecretArena`], which wraps
-//! the `mlock`/`madvise`/`mmap` syscalls behind a safe API. All domain-separation labels are
-//! supplied by the caller, so the crypto stays application-agnostic.
+//! crate is `#![deny(unsafe_code)]`; the only `unsafe` backs SecretArena, which wraps the
+//! `mlock`/`madvise`/`mmap` syscalls behind a safe API and is private. All domain-separation
+//! labels are supplied by the caller, so the crypto stays application-agnostic.
 //!
 //! # Two pillars
 //!

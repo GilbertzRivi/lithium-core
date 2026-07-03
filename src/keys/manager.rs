@@ -655,7 +655,9 @@ impl<P: MkProvider> KeyManager<P> {
         let dili_sk =
             keyfile::load_bytes_decrypted(&self.priv_dir.join(DILI_PRIV), &mk, KT_DILI_SK)?;
         let ed_locked = self.arena.store_fixed::<32>(ed_seed.as_array())?;
-        let dili_locked = self.arena.store_slice_fixed::<32>(dili_sk.expose_as_slice())?;
+        let dili_locked = self
+            .arena
+            .store_slice_fixed::<32>(dili_sk.expose_as_slice())?;
         drop(ed_seed);
         drop(dili_sk);
         f(ed_locked, dili_locked)
@@ -670,7 +672,9 @@ impl<P: MkProvider> KeyManager<P> {
         let kyber_sk =
             keyfile::load_bytes_decrypted(&self.priv_dir.join(KYBER_PRIV), &mk, KT_KYBER_SK)?;
         let x_locked = self.arena.store_fixed::<32>(x_seed.as_array())?;
-        let kyber_locked = self.arena.store_slice_fixed::<64>(kyber_sk.expose_as_slice())?;
+        let kyber_locked = self
+            .arena
+            .store_slice_fixed::<64>(kyber_sk.expose_as_slice())?;
         drop(x_seed);
         drop(kyber_sk);
         f(x_locked, kyber_locked)

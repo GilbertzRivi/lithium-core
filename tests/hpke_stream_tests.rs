@@ -21,9 +21,18 @@ fn multi_message_roundtrips_in_order() {
     let c2 = sender.seal(b"aad-2", &msg(b"chunk two")).unwrap();
 
     let mut receiver = setup_receiver(CTX, &sk, &enc, b"info").unwrap();
-    assert_eq!(receiver.open(b"aad-0", &c0).unwrap().expose_as_slice(), b"chunk zero");
-    assert_eq!(receiver.open(b"aad-1", &c1).unwrap().expose_as_slice(), b"chunk one");
-    assert_eq!(receiver.open(b"aad-2", &c2).unwrap().expose_as_slice(), b"chunk two");
+    assert_eq!(
+        receiver.open(b"aad-0", &c0).unwrap().expose_as_slice(),
+        b"chunk zero"
+    );
+    assert_eq!(
+        receiver.open(b"aad-1", &c1).unwrap().expose_as_slice(),
+        b"chunk one"
+    );
+    assert_eq!(
+        receiver.open(b"aad-2", &c2).unwrap().expose_as_slice(),
+        b"chunk two"
+    );
 }
 
 #[test]

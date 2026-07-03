@@ -63,7 +63,9 @@ pub fn mldsa87_pub_from_seed(seed: &[u8]) -> Result<PublicBytes> {
     let mut xi = B32::default();
     xi.copy_from_slice(seed);
     let sk = DsaSigningKey::<MlDsa87>::from_seed(&xi);
-    Ok(PublicBytes::from_slice(sk.verifying_key().to_bytes().as_ref()))
+    Ok(PublicBytes::from_slice(
+        sk.verifying_key().to_bytes().as_ref(),
+    ))
 }
 
 #[inline]

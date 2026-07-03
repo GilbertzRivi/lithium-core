@@ -12,7 +12,13 @@ fn tmp_dir(tag: &str) -> std::path::PathBuf {
 }
 
 fn start(dir: &std::path::Path) -> lithium_core::Result<KeyManager<FileMk>> {
-    KeyManager::start(dir, KeyStoreKind::Server, FileMk { path: dir.join("mk") })
+    KeyManager::start(
+        dir,
+        KeyStoreKind::Server,
+        FileMk {
+            path: dir.join("mk"),
+        },
+    )
 }
 
 #[test]

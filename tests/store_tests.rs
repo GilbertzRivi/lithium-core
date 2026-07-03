@@ -167,9 +167,15 @@ fn store_multiple_independent_keys() {
     store.set("b", sb(b"beta"), ttl).unwrap();
     store.set("c", sb(b"gamma"), ttl).unwrap();
 
-    assert_eq!(store.peek("a").unwrap().unwrap().expose_as_slice(), b"alpha");
+    assert_eq!(
+        store.peek("a").unwrap().unwrap().expose_as_slice(),
+        b"alpha"
+    );
     assert_eq!(store.peek("b").unwrap().unwrap().expose_as_slice(), b"beta");
-    assert_eq!(store.peek("c").unwrap().unwrap().expose_as_slice(), b"gamma");
+    assert_eq!(
+        store.peek("c").unwrap().unwrap().expose_as_slice(),
+        b"gamma"
+    );
 }
 
 #[test]
@@ -186,8 +192,5 @@ fn store_set_if_absent_allows_reinsertion_after_expiry() {
         .set_if_absent("key", sb(b"v2"), Duration::from_secs(60))
         .unwrap();
     assert!(second, "should succeed after original TTL expired");
-    assert_eq!(
-        store.peek("key").unwrap().unwrap().expose_as_slice(),
-        b"v2"
-    );
+    assert_eq!(store.peek("key").unwrap().unwrap().expose_as_slice(), b"v2");
 }

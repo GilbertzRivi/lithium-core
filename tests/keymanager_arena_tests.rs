@@ -18,14 +18,16 @@ fn arena_backed_signing_keys_sign_and_verify() {
     let km = KeyManager::start(
         &dir,
         KeyStoreKind::Server,
-        FileMk { path: dir.join("mk") },
+        FileMk {
+            path: dir.join("mk"),
+        },
     )
     .unwrap();
 
     let ed_pub = km.public_keys().ed25519;
     let dili_pub = km.public_keys().dilithium.clone();
     let msg = b"born-locked signing path";
-    
+
     let (ed_sig, dili_sig) = km
         .with_signing_keys(|ed_seed, dili_sk| {
             let e = sign::sign_message(msg, ed_seed.as_slice())?;
@@ -47,7 +49,9 @@ fn arena_backed_x25519_kyber_load_is_correct() {
     let km = KeyManager::start(
         &dir,
         KeyStoreKind::Server,
-        FileMk { path: dir.join("mk") },
+        FileMk {
+            path: dir.join("mk"),
+        },
     )
     .unwrap();
 

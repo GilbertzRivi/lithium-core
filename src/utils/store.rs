@@ -275,9 +275,6 @@ mod tests {
             !guard.map.contains_key("short"),
             "short-TTL entry must be scrubbed by the background thread without any access"
         );
-        assert!(
-            guard.map.contains_key("long"),
-            "long-TTL entry must remain"
-        );
+        assert!(guard.map.contains_key("long"), "long-TTL entry must remain");
     }
 }

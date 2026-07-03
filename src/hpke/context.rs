@@ -39,7 +39,13 @@ pub fn setup_sender(
 ) -> Result<(HpkeEnc, HpkeSenderContext)> {
     let (shared_secret, enc) = kem_encap(ctx, &recipient_pk.x_pub, &recipient_pk.k_pub)?;
     let hpke_ctx = key_schedule(ctx, &shared_secret, info)?;
-    Ok((enc, HpkeSenderContext { ctx: hpke_ctx, seq: 0 }))
+    Ok((
+        enc,
+        HpkeSenderContext {
+            ctx: hpke_ctx,
+            seq: 0,
+        },
+    ))
 }
 
 pub fn setup_receiver(
@@ -50,7 +56,10 @@ pub fn setup_receiver(
 ) -> Result<HpkeReceiverContext> {
     let shared_secret = kem_decap(ctx, &recipient_sk.x_priv, &recipient_sk.k_priv, enc)?;
     let hpke_ctx = key_schedule(ctx, &shared_secret, info)?;
-    Ok(HpkeReceiverContext { ctx: hpke_ctx, seq: 0 })
+    Ok(HpkeReceiverContext {
+        ctx: hpke_ctx,
+        seq: 0,
+    })
 }
 
 impl HpkeSenderContext {

@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 use lithium_core::ErrorKind;
-use lithium_core::crypto::{keys, sign};
 use lithium_core::crypto::sign::DoubleSig;
+use lithium_core::crypto::{keys, sign};
 
 struct Keys {
     ed_seed: lithium_core::secrets::SecretFixedBytes<32>,
@@ -39,7 +39,12 @@ fn roundtrips() {
 fn wrong_message_fails() {
     let k = fresh_keys();
     let sig = sign(&k, b"original");
-    assert!(!sign::verify_double(b"tampered", &sig, &k.ed_pub, &k.dili_pub));
+    assert!(!sign::verify_double(
+        b"tampered",
+        &sig,
+        &k.ed_pub,
+        &k.dili_pub
+    ));
 }
 
 #[test]
@@ -55,8 +60,18 @@ fn both_branches_are_required() {
     bytes[64..].copy_from_slice(&b_bytes[64..]); // keep ed(A), swap in dili(B)
     let mixed = DoubleSig::from_bytes(&bytes).unwrap();
 
-    assert!(!sign::verify_double(b"message-a", &mixed, &k.ed_pub, &k.dili_pub));
-    assert!(!sign::verify_double(b"message-b", &mixed, &k.ed_pub, &k.dili_pub));
+    assert!(!sign::verify_double(
+        b"message-a",
+        &mixed,
+        &k.ed_pub,
+        &k.dili_pub
+    ));
+    assert!(!sign::verify_double(
+        b"message-b",
+        &mixed,
+        &k.ed_pub,
+        &k.dili_pub
+    ));
 }
 
 #[test]

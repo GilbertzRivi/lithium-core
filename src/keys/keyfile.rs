@@ -482,10 +482,16 @@ mod tests {
 
         let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600, "keyfile must be owner-only");
-        assert_eq!(read_keyfile_bytes(&path).unwrap().expose_as_slice(), b"top secret payload");
-        assert!(fs::read_dir(&dir).unwrap().all(|e| {
-            e.unwrap().file_name().to_string_lossy() == "secret.keyf"
-        }), "no leftover tmp files");
+        assert_eq!(
+            read_keyfile_bytes(&path).unwrap().expose_as_slice(),
+            b"top secret payload"
+        );
+        assert!(
+            fs::read_dir(&dir)
+                .unwrap()
+                .all(|e| { e.unwrap().file_name().to_string_lossy() == "secret.keyf" }),
+            "no leftover tmp files"
+        );
 
         let _ = fs::remove_dir_all(&dir);
     }

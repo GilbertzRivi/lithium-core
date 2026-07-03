@@ -58,7 +58,12 @@ impl MkProvider for PasswordMkProvider {
         let salt = keys::random_32()?;
         let kek = self.derive_kek(salt.as_slice())?;
         let nonce = keys::random_12()?;
-        let blob = aead::encrypt(&SecretBytes::from_slice(mk.as_slice()), &kek, &nonce, WRAP_AAD)?;
+        let blob = aead::encrypt(
+            &SecretBytes::from_slice(mk.as_slice()),
+            &kek,
+            &nonce,
+            WRAP_AAD,
+        )?;
         let mut out = Vec::with_capacity(SALT_LEN + blob.len());
         out.extend_from_slice(salt.as_slice());
         out.extend_from_slice(blob.as_slice());
@@ -67,8 +72,10 @@ impl MkProvider for PasswordMkProvider {
 }
 
 fn main() -> Result<()> {
-    let dir =
-        std::env::temp_dir().join(format!("lithium_password_mk_example_{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!(
+        "lithium_password_mk_example_{}",
+        std::process::id()
+    ));
     std::fs::create_dir_all(&dir).ok();
 
     let make = || PasswordMkProvider {

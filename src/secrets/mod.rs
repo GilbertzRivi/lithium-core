@@ -6,8 +6,8 @@ pub(crate) mod bytes;
 pub(crate) mod json;
 pub(crate) mod string;
 
-pub use arena::{ArenaByte32, ArenaByte64, ArenaFixedBytes, harden_process};
 pub(crate) use arena::SecretArena;
+pub use arena::{ArenaByte32, ArenaByte64, ArenaFixedBytes, harden_process};
 pub use bytes::{
     MasterKey32, Nonce12, SecByte12, SecByte32, SecByte64, SecretBytes, SecretFixedBytes,
     SessionId32, ZeroizingWriter,

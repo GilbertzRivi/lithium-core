@@ -384,7 +384,11 @@ mod tests {
         };
         let reused = arena.claim(32).unwrap();
         assert_eq!(reused.off, off, "same size class must reuse the freed slot");
-        assert_eq!(reused.as_slice(), [0u8; 32], "freed secret must be zeroized");
+        assert_eq!(
+            reused.as_slice(),
+            [0u8; 32],
+            "freed secret must be zeroized"
+        );
         assert_ne!(reused.as_slice(), leaked, "must not observe the old secret");
     }
 
@@ -407,8 +411,14 @@ mod tests {
     fn store_slice_fixed_rejects_wrong_length_without_allocating() {
         let arena = SecretArena::with_capacity(4096).unwrap();
         let base = arena.lock().unwrap().offset;
-        assert!(arena.store_slice_fixed::<32>(&[0u8; 31]).is_err(), "too short");
-        assert!(arena.store_slice_fixed::<32>(&[0u8; 33]).is_err(), "too long");
+        assert!(
+            arena.store_slice_fixed::<32>(&[0u8; 31]).is_err(),
+            "too short"
+        );
+        assert!(
+            arena.store_slice_fixed::<32>(&[0u8; 33]).is_err(),
+            "too long"
+        );
         assert!(arena.store_slice_fixed::<32>(&[0u8; 0]).is_err(), "empty");
         assert_eq!(
             arena.lock().unwrap().offset,
@@ -454,7 +464,11 @@ mod tests {
         };
         let sixteen = arena.store_fixed::<16>(&[0u8; 16]).unwrap();
         assert_eq!(sixteen.0.off, off, "shared size class must reuse the slot");
-        assert_eq!(sixteen.as_array(), &[0u8; 16], "reused slot must be fully zeroed");
+        assert_eq!(
+            sixteen.as_array(),
+            &[0u8; 16],
+            "reused slot must be fully zeroed"
+        );
     }
 
     #[test]
@@ -462,7 +476,11 @@ mod tests {
         let arena = SecretArena::with_capacity(4096).unwrap();
         for n in 0..8u8 {
             let h = arena.store_fixed::<17>(&[n; 17]).unwrap();
-            assert_eq!(h.0.ptr as usize % ALIGN, 0, "every region must be {ALIGN}-aligned");
+            assert_eq!(
+                h.0.ptr as usize % ALIGN,
+                0,
+                "every region must be {ALIGN}-aligned"
+            );
         }
     }
 
@@ -604,8 +622,15 @@ mod tests {
             }
 
             for (h, expected) in &live {
-                assert_eq!(h.as_slice(), expected.as_slice(), "handle diverged from model");
-                assert!(h.as_slice().iter().any(|&b| b != 0), "live handle read as zeroed");
+                assert_eq!(
+                    h.as_slice(),
+                    expected.as_slice(),
+                    "handle diverged from model"
+                );
+                assert!(
+                    h.as_slice().iter().any(|&b| b != 0),
+                    "live handle read as zeroed"
+                );
             }
         }
     }
