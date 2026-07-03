@@ -65,8 +65,7 @@ the caller upholding:
 - **Adaptive attacker on decapsulation.** ML-KEM-1024 is IND-CCA2 
   (FO transform with implicit rejection); a tampered `ct_kem` 
   yields a different `ss_kem` and is also rebound through 
-  `SHA256(ct_kem)` in `base_key`, so it fails the body/headers 
-  AEAD.
+  `SHA256(ct_kem)` in `base_key`, so it fails the payload AEAD.
 
 ## Forward secrecy / post-compromise
 
@@ -80,7 +79,8 @@ KyberBox.
 
 - Key distribution / PKI / identity verification.
 - Side-channel resistance beyond what the primitives give. Note: 
-  ML-KEM/ML-DSA come from `pqcrypto` (C code), the constant-time 
-  assumptions are inherited from those implementations.
+  ML-KEM/ML-DSA come from the RustCrypto `ml-kem` / `ml-dsa` crates 
+  (pure Rust), the constant-time assumptions are inherited from 
+  those implementations.
 - Process memory safety against a local attacker with the same UID 
   (handled at the messenger layer).

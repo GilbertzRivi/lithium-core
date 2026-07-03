@@ -88,7 +88,7 @@ impl<const N: usize> Eq for SecretFixedBytes<N> {}
 
 impl<const N: usize> fmt::Debug for SecretFixedBytes<N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "FixedBytes<{}>(..)", N)
+        write!(f, "SecretFixedBytes<{}>(..)", N)
     }
 }
 

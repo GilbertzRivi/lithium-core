@@ -8,9 +8,8 @@ audit.
 
 ## Goal
 
-KyberBox encrypts two plaintexts (`body` and `headers`) in one 
-operation. Output: three opaque blobs, `enc_body`, `enc_headers`, 
-`kem_ct`.
+KyberBox encrypts one plaintext (`data`) in one operation. Output: 
+two opaque blobs, `enc_data` and `kem_ct`.
 
 Hybrid by design:
 
@@ -29,20 +28,15 @@ All versions are pinned in `Cargo.lock`.
 | Primitive | Implementation | Version |
 |---|---|---|
 | X25519 ECDH | `x25519-dalek` / `curve25519-dalek` | 2.0.1 / 4.1.3 |
-| ML-KEM-1024 | `pqcrypto-mlkem` (PQClean `ml-kem-1024`) | 0.1.1 |
+| ML-KEM-1024 | `ml-kem` (RustCrypto, pure Rust, FIPS 203) | 0.3.2 |
 | AES-256-GCM-SIV | `aes-gcm-siv` | 0.11.1 |
 | HKDF-SHA256 | `hkdf` + `sha2` | 0.12.4 / 0.10.9 |
 | CSRNG | `rand::rngs::SysRng` | - |
 
-The ML-KEM-1024 code is PQClean `ml-kem-1024` (clean C reference 
-implementation), not the `kyber1024` directory (the pre-standard 
-CRYSTALS-Kyber draft). Both ship in the bundled PQClean tree and 
-are not compatible. Markers that confirm the FIPS 203 variant:
-
-- FFI prefix `PQCLEAN_MLKEM1024_CLEAN_`
-- `PQCLEAN_MLKEM1024_CLEAN_CRYPTO_BYTES = 32`
-
-AVX2 and NEON paths are on by default.
+ML-KEM-1024 is the RustCrypto `ml-kem` crate: a pure-Rust FIPS 203
+implementation, no C or FFI. The recipient key is a 1568-byte
+encapsulation key; the stored secret is a 64-byte seed from which the
+decapsulation key is rebuilt on use.
 
 ## Key flow
 
@@ -53,7 +47,7 @@ The caller provides:
 - `peer_pub_x`: recipient's X25519 public key (their reply/ratchet 
   key)
 - `peer_k_pub`: recipient's ML-KEM-1024 public key
-- `body`, `headers`: the plaintexts
+- `data`: the plaintext
 - `ctx`: a context string for domain separation 
   (`"lithiumd/e2e-msg/v1"` in practice)
 
@@ -73,28 +67,25 @@ Step 3: Base key (combination of both paths)
                          info="{ctx}/base-key/v1" || ct_T || ek_T
                               || SHA256(ct_kem))
 
-Step 4: Encrypt the payloads
-  body_key    = HKDF-SHA256(IKM=base_key, salt=none, info="{ctx}/body-key/v1")
-  headers_key = HKDF-SHA256(IKM=base_key, salt=none, info="{ctx}/headers-key/v1")
-  enc_body    = [0x01] || nonce_b || AES-256-GCM-SIV(body, body_key, nonce_b,
-                                                       "{ctx}/body/v1")
-  enc_headers = [0x01] || nonce_h || AES-256-GCM-SIV(headers, headers_key, nonce_h,
-                                                       "{ctx}/headers/v1")
+Step 4: Encrypt the payload
+  enc_data = [0x01] || nonce || AES-256-GCM-SIV(data, base_key, nonce,
+                                                 "{ctx}/data/v1")
 
-Result: WirePayload { enc_body, enc_headers, kem_ct }
+Result: WirePayload { enc_data, kem_ct }
 ```
 
 Notes:
 
 - `ct_T` is `msg_x_pub` (sender's ephemeral X25519 public key).
 - `ek_T` is `peer_pub_x` (recipient's X25519 public key).
-- `nonce_b` and `nonce_h` are 12 random bytes from the CSRNG, 
-  drawn per call.
+- `nonce` is 12 random bytes from the CSRNG, drawn per call.
+- `base_key` is used directly as the AEAD key; the AAD is
+  `"{ctx}/data/v1"`.
 
 Decryption runs the same steps in reverse: parse `kem_ct`, 
 decapsulate `ss_kem` from `ct_kem`, rebuild the key chain from 
 `ecdh_key` and `ss_kem` with the same bound transcript, decrypt 
-body and headers.
+`data`.
 
 ## Properties from the construction
 
@@ -112,20 +103,14 @@ Giacon et al. 2018). Mapping: [`combiner.md`](combiner.md).
 **Fresh key per message.** Every message draws a fresh `ss_kem` 
 from ML-KEM encapsulation, even when the recipient's public keys 
 are reused (which lasts until they reply). `ss_kem` is the salt in 
-`base_key`, so every message gets a unique `base_key` and unique 
-body/headers keys.
+`base_key`, so every message gets a unique `base_key`.
 
-**Nonce-reuse resistance.** Body and headers use AES-256-GCM-SIV, 
-not plain GCM. Under SIV, a nonce collision only reveals that two 
+**Nonce-reuse resistance.** The payload uses AES-256-GCM-SIV, not 
+plain GCM. Under SIV, a nonce collision only reveals that two 
 messages under one key are identical; it does not leak the key or 
 the plaintext. With 96-bit random nonces a collision needs about 
 2^48 blobs under one AEAD key (out of reach), and would also need 
 `base_key` reuse (which does not happen). Defense in depth.
-
-**Body-headers separation.** Body and headers use different keys 
-from different labels. Swapping `enc_body` and `enc_headers`, or 
-pulling either from another message, fails AEAD. A body and 
-headers that decrypt together share one `base_key`.
 
 **Transcript binding.** The `base_key` HKDF `info` binds the full 
 transcript: `ct_T` (sender's ephemeral X25519 public key), `ek_T` 
@@ -172,7 +157,7 @@ fresh-key-per-message property.
 to a sender. Anyone who knows `peer_k_pub` and `peer_pub_x` (or 
 intercepts `from_x_pub` in transit) can produce a valid 
 `WirePayload`. In Lithium the Ed25519 + ML-DSA-87 dual signature 
-over the plaintext headers and body provides authentication, 
+over the plaintext provides authentication, 
 verified in `session.rs` before content is returned.
 
 **Replay protection (at the KyberBox level).** A recorded 
@@ -211,12 +196,12 @@ part of all messages under that key. The ML-KEM path still gives
 per-message separation (unique `ss_kem`), but a broken ML-KEM plus 
 a recovered `rx_x_priv` opens the whole epoch.
 
-**One commitment over all three blobs.** The three `WirePayload` 
-fields are independent AEAD blobs with no shared MAC. The binding 
-runs through `base_key`: `enc_body` and `enc_headers` decrypt only 
-when `ss_kem` is recovered from `kem_ct` and the bound transcript 
-matches. Swapping in a field from another message fails AEAD, which 
-reads as transmission corruption, not as a protocol-level signal.
+**Binding through `base_key`.** `enc_data` and `kem_ct` are 
+independent blobs with no shared MAC. The binding runs through 
+`base_key`: `enc_data` decrypts only when `ss_kem` is recovered from 
+`kem_ct` and the bound transcript matches. Swapping in a field from 
+another message fails AEAD, which reads as transmission corruption, 
+not as a protocol-level signal.
 
 ## Open risks and questions for the auditor
 
@@ -241,19 +226,18 @@ in the codebase. Any future code that read the stored bytes
 directly as a Curve25519 scalar would be wrong. The auditor should 
 check that every use site goes through `XStaticSecret::from()`.
 
-**PQClean C code is an unaudited dependency.** ML-KEM-1024 is the 
-PQClean reference C, compiled through FFI, with AVX2 and NEON on by 
-default. The Lithium team has not audited it. A timing side 
-channel, memory bug, or FIPS 203 mismatch there would carry over. 
-A standard dependency risk, called out given the threat model.
+**ML-KEM is an unaudited dependency.** ML-KEM-1024 is the RustCrypto 
+`ml-kem` crate (pure Rust, FIPS 203). The Lithium team has not 
+audited it. A timing side channel, correctness bug, or FIPS 203 
+mismatch there would carry over. A standard dependency risk, called 
+out given the threat model.
 
 ## Summary
 
 - ML-KEM-1024 and X25519 each give an independent shared secret.
 - HKDF joins them into `base_key` (the UniversalCombiner shape, 
   full transcript in `info`).
-- AES-256-GCM-SIV encrypts body and headers under keys from 
-  `base_key`.
+- AES-256-GCM-SIV encrypts the payload under `base_key`.
 - Goals: fresh key per message (per-message `ss_kem`), hybrid 
   classical/post-quantum security (combined derivation), 
   nonce-reuse resistance (SIV).
@@ -268,6 +252,6 @@ forward secrecy on its own. The layers above do:
 
 Main items for external validation:
 
-- the PQClean ML-KEM-1024 C implementation
+- the RustCrypto `ml-kem` ML-KEM-1024 implementation
 - the X25519 clamping convention at every store and use site
 - HKDF-SHA256 with the X25519 output as IKM and no explicit salt

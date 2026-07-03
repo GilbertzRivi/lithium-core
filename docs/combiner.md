@@ -16,7 +16,7 @@ Wire and key flow: [`kyberbox.md`](kyberbox.md).
 ## Construction
 
 KyberBox is not a KEM that returns a shared secret. It is a full 
-AEAD over `body` and `headers`. Two branches feed one HKDF:
+AEAD over one payload (`data`). Two branches feed one HKDF:
 
 ```
 Classical branch (X25519):
@@ -30,8 +30,7 @@ Combiner:
   base_key   = HKDF-SHA256(IKM=ecdh_key, salt=ss_kem,
                            info="{ctx}/base-key/v1" || ct_T || ek_T
                                 || SHA256(ct_kem))
-  body_key   = HKDF-SHA256(IKM=base_key, salt=none, info="{ctx}/body-key/v1")
-  headers_key= HKDF-SHA256(IKM=base_key, salt=none, info="{ctx}/headers-key/v1")
+  enc_data   = AES-256-GCM-SIV(data, base_key, nonce, aad="{ctx}/data/v1")
 ```
 
 The pieces:
@@ -100,7 +99,7 @@ parameters not construction:
 
 - ML-KEM-**1024** (cat. 5), not 768 (cat. 1). The stack 
   (ML-DSA-87) is cat. 5.
-- AEAD, not a bare KEM. `base_key` encrypts `body` and `headers` 
+- AEAD, not a bare KEM. `base_key` encrypts the payload (`data`) 
   with AES-256-GCM-SIV. The combiner up to `base_key` is the same.
 
 What gets bound:
@@ -123,8 +122,8 @@ This is the UniversalCombiner, not the weaker C2PRICombiner.
   `ss_kem` as salt adds entropy on top
 - serialization and domain separation: field order in `info`, the 
   `ctx` labels, the AEAD AADs
-- code hygiene: zeroization, error handling, the Rust/FFI boundary 
-  to PQClean ML-KEM-1024
+- code hygiene: zeroization, error handling, the RustCrypto 
+  `ml-kem` ML-KEM-1024 dependency
 
 Code: `lithium_core/src/crypto/kyberbox.rs` (plus `crypto/kdf.rs`, 
 `crypto/aead.rs`). Wire and key flow: 

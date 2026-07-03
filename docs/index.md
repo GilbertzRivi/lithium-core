@@ -17,8 +17,9 @@ transport). The central piece is the hybrid KyberBox combiner, and
 its correctness is the main finding.
 
 **In scope:** the two pillars of `lithium_core`, key management at 
-rest (`keys`, `secrets`) and hybrid encryption (`crypto`), plus 
-the helpers (`opaque`, `pow`, `passwords`, `utils::store`).
+rest (`keys`, `secrets`, `public`) and hybrid encryption (`crypto`, 
+`hpke`), plus the helpers (`opaque`, `pow`, `passwords`, 
+`utils::store`).
 
 **Out of scope:** the application layers, `lithiumd` (IPC, E2E 
 session), `lithiums` (relay, REST transport, rate limiting), 
@@ -47,8 +48,8 @@ What the audit confirms (see [`combiner.md`](combiner.md)): that
 `base_key` is the UniversalCombiner instance it claims to be (the 
 dualPRF combiner with `ss_kem` as salt and `ecdh_key` as IKM, the 
 full transcript bound into `info`), that HKDF-Extract covers the 
-non-uniform X25519 IKM, and that the serialization, domain 
-separation, and Rust/FFI boundary are implemented faithfully.
+non-uniform X25519 IKM, and that the serialization and domain 
+separation are implemented faithfully.
 
 ## Reproducibility and coverage
 
@@ -56,14 +57,15 @@ separation, and Rust/FFI boundary are implemented faithfully.
   in `rust-toolchain.toml` (`1.96.0`). The full bit-for-bit 
   reproducibility of the messenger client binary is documented in 
   the main Lithium repo.
-- Known-answer vectors (KAT): `tests/golden_tests.rs` (3 tests) on 
+- Known-answer vectors (KAT): `tests/golden_tests.rs` (6 tests) on 
   data in `tests/testdata/` (`kyberbox_golden_v1`, 
-  `mldsa87_verify_golden_v1`).
-- Public API tests: `crypto_tests` (89), `secret_tests` (66), 
-  `password_tests` (21), `store_tests` (14).
-- Fuzzing: 7 `cargo-fuzz` targets on the surfaces that parse 
+  `mldsa87_verify_golden_v1`, `hpke_golden_v1`).
+- Public API tests: `crypto_tests` (86), `hpke_tests` (37), 
+  `secret_tests` (66), `password_tests` (21), `store_tests` (14).
+- Fuzzing: 10 `cargo-fuzz` targets on the surfaces that parse 
   untrusted input (`keyfile_parse`, `secret_json`, `opaque_parse`, 
-  `kyberbox_decrypt`, `aead_decrypt`, `sign_verify`, `pow_verify`).
+  `kyberbox_decrypt`, `aead_decrypt`, `sign_verify`, `pow_verify`, 
+  `hpke_open`, `hpke_setup_receiver`, `hpke_wire`).
 
 ## What the auditor gets
 

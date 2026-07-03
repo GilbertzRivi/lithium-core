@@ -14,8 +14,9 @@ giving up standard encryption which has been battle-tested for many
 years now. In case the PQ turns out to be flawed, the classic
 encryption holds, and vice versa.
 
-**Cost**: Performance, bigger keys, and a C-code dependency (the
-unaudited PQClean ML-KEM, see [`kyberbox.md`](kyberbox.md)).
+**Cost**: Performance, bigger keys, and an unaudited ML-KEM
+dependency (the RustCrypto `ml-kem` crate, see
+[`kyberbox.md`](kyberbox.md)).
 
 ## 2. AES-256-GCM-SIV as the sole AEAD
 

@@ -52,7 +52,7 @@ is untouched. The rewrap is crash-safe.
 
 ## Secret types
 
-`Byte32`, `SecretBytes`, `SecretString`, `MasterKey32` all zeroize 
+`SecByte32`, `SecretBytes`, `SecretString`, `MasterKey32` all zeroize 
 on drop, so key material doesn't linger in process memory after 
 use.
 
