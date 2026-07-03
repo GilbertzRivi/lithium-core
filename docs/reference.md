@@ -27,6 +27,40 @@ the cryptography, the secret types, and key management.
 
 ### `crypto`: cryptographic operations
 
+#### `crypto::Context`: domain-separation labels
+
+A validated, caller-supplied domain-separation tag. It is threaded into
+`kyberbox` and `hpke`, so every derived key and AEAD label is bound to
+one usage. The library owns the version suffix; callers never write it.
+
+```
+Context::base(root: &str) -> Result<Context>            // first segment
+Context::add(&self, segment: &str) -> Result<Context>   // append a segment (non-mutating)
+```
+
+Construction is the only public surface: there is no `from_str`, and no
+way to turn a `Context` back into a raw string. A context is built one
+validated segment at a time, and the crate-internal label always ends
+in the version tag (`/v1`), added by the library.
+
+Segment rules (each `base` / `add` argument): non-empty, printable
+ASCII (`0x21..=0x7e`) only, and no `/` (the segment separator). The
+whole context is capped at 255 bytes. A violation returns
+`LithiumError::invalid_context`.
+
+`add` does not mutate; it returns a fresh `Context`, so one base can fan
+out into several without repeating the prefix:
+```
+let base = Context::base("myapp")?.add("mail")?;
+let enc  = base.add("encrypt")?;   // myapp/mail/encrypt
+let mac  = base.add("mac")?;       // myapp/mail/mac
+```
+
+Why segments instead of one string: a hand-written `"app/" + input`
+lets a `/` in `input` forge another context. `add` validates every
+segment and forbids `/`, so caller-supplied parts cannot inject
+separators. The safe path is the only path.
+
 #### `crypto::aead`: symmetric encryption
 
 AES-256-GCM-SIV with an authenticated ciphertext (AEAD).
@@ -56,16 +90,18 @@ failure.
 HKDF-SHA256. One call derives 32 bytes of key.
 
 ```
-derive32(input, salt, info) -> SecByte32              // 32 bytes
-derive_bytes(input, salt, info, len) -> SecretBytes   // arbitrary length
-hkdf_extract(salt, ikm) -> SecByte32                  // HKDF-Extract (PRK)
-hkdf_expand(prk, info, len) -> SecretBytes            // HKDF-Expand
+derive32(input, salt, info: &[u8]) -> SecByte32              // 32 bytes
+derive_bytes(input, salt, info: &[u8], len) -> SecretBytes   // arbitrary length
+hkdf_extract(salt, ikm) -> SecByte32                         // HKDF-Extract (PRK)
+hkdf_expand(prk, info, len) -> SecretBytes                   // HKDF-Expand
 ```
 
-`salt` is optional. `info` is always required and is used for 
-domain separation. `derive_bytes` backs `derive32` and the HPKE key
-schedule; `hkdf_extract` / `hkdf_expand` expose the two HKDF stages
-separately for callers that need them.
+`input` (IKM) and the optional `salt` are secret (`&SecretBytes`).
+`info` is a plain `&[u8]`: it is the domain-separation label, which is
+public by definition, not a secret. It is always required. `derive_bytes`
+backs `derive32` and the HPKE key schedule; `hkdf_extract` /
+`hkdf_expand` expose the two HKDF stages separately for callers that
+need them.
 
 #### `crypto::hash`: hashing
 
@@ -143,17 +179,22 @@ The scheme for one message:
 3. (ss_kem, ct_kem) = ML-KEM-1024.Encapsulate(peer_kyber_pub)
 4. base_key = HKDF(ecdh_key, salt=ss_kem,
                    info="{ctx}/base-key/v1" || ct_T || ek_T || SHA256(ct_kem))
-5. enc_data = AES-256-GCM-SIV(data, base_key, aad="{ctx}/data/v1")
+5. enc_data = AES-256-GCM-SIV(data, base_key, aad="{ctx}/data/v1" [|| 0x00 || caller_aad])
 ```
 
-A single payload is sealed: `base_key` is used directly as the AEAD
-key, with `"{ctx}/data/v1"` as the AAD.
+The `{ctx}/.../v1` labels come from the caller's
+[`Context`](#cryptocontext-domain-separation-labels): the parts
+`ecdh-key`, `base-key`, `data` are appended as segments and the `/v1`
+suffix is added by the library.
 
-`WirePayload` output format:
+A single payload is sealed: `base_key` is used directly as the AEAD
+key, with `"{ctx}/data/v1"` as the AAD. See `caller_aad` below.
+
+`KyberBoxSealed` output format:
 
 ```rust
-pub struct WirePayload {
-    pub enc_data: PublicBytes,
+pub struct KyberBoxSealed {
+    pub ciphertext: PublicBytes,
     pub kem_ct: PublicBytes,   // ML-KEM ciphertext
 }
 ```
@@ -170,14 +211,25 @@ info, along with `SHA256(ct_kem)`.
 Interface:
 
 ```
-encrypt(ctx, priv_x, peer_pub_x: &PubByte32, peer_k_pub: &PublicBytes, data) -> WirePayload
-decrypt(ctx, priv_x, peer_pub_x: &PubByte32, kyber_priv, wire) -> SecretBytes   // data
+seal(ctx: &Context, priv_x, peer_pub_x: &PubByte32, peer_k_pub: &PublicBytes,
+     aad: &[u8], data) -> KyberBoxSealed
+open(ctx: &Context, priv_x, peer_pub_x: &PubByte32, kyber_priv,
+     aad: &[u8], sealed: &KyberBoxSealed) -> SecretBytes
 ```
 
 The sender's X25519 secret (`priv_x`) and the recipient's ML-KEM
 secret (`kyber_priv`) are secret types; the peer public keys are
-public types. `ctx` is a context string that separates domains (for
-example `"shake"`, `"session"`).
+public types. `ctx` is a [`Context`](#cryptocontext-domain-separation-labels)
+that separates domains.
+
+`aad` is an optional caller-supplied AAD, for binding the ciphertext to
+an external header or transcript. When non-empty it is appended to the
+`data` label as `label || 0x00 || aad`; when empty the AAD is just the
+label (no wire change). The label is NUL-free, so the `0x00` separator
+is unambiguous and a crafted `aad` cannot impersonate another context.
+`aad` is bound: `open` must pass the exact same bytes or decryption
+fails. Domain separation itself lives in the derived key, so `aad` is
+an additional binding, not a substitute for `ctx`.
 
 The full construction, properties, and open questions: 
 [`kyberbox.md`](kyberbox.md).
@@ -193,24 +245,30 @@ secret-export mode. Only the base (unauthenticated-sender) mode is
 provided.
 
 ```
-derive_keypair(ctx, ikm) -> (HpkePrivateKey, HpkePublicKey)   // deterministic from ikm
+derive_keypair(ctx: &Context, ikm) -> (HpkePrivateKey, HpkePublicKey)   // deterministic from ikm
 
-seal_base(ctx, recipient_x_pub: &PubByte32, recipient_k_pub: &PublicBytes,
+seal_base(ctx: &Context, recipient_x_pub: &PubByte32, recipient_k_pub: &PublicBytes,
           info, aad, plaintext: &SecretBytes) -> HpkeSealed
-open_base(ctx, recipient_x_priv: &SecByte32, recipient_k_priv: &SecretBytes,
+open_base(ctx: &Context, recipient_x_priv: &SecByte32, recipient_k_priv: &SecretBytes,
           info, aad, sealed: &HpkeSealed) -> SecretBytes
 
 // Multi-message: one KEM setup, then many messages under a sequence nonce.
-setup_sender(ctx, recipient_pk: &HpkePublicKey, info) -> (HpkeEnc, HpkeSenderContext)
-setup_receiver(ctx, recipient_sk: &HpkePrivateKey, enc: &HpkeEnc, info) -> HpkeReceiverContext
+setup_sender(ctx: &Context, recipient_pk: &HpkePublicKey, info) -> (HpkeEnc, HpkeSenderContext)
+setup_receiver(ctx: &Context, recipient_sk: &HpkePrivateKey, enc: &HpkeEnc, info) -> HpkeReceiverContext
 HpkeSenderContext::seal(&mut self, aad, plaintext: &SecretBytes) -> PublicBytes
 HpkeReceiverContext::open(&mut self, aad, ciphertext: &PublicBytes) -> SecretBytes
 
-setup_sender_and_export(ctx, recipient_pk: &HpkePublicKey,
+setup_sender_and_export(ctx: &Context, recipient_pk: &HpkePublicKey,
                         info, exporter_context, exporter_length) -> (HpkeEnc, SecretBytes)
-setup_receiver_and_export(ctx, recipient_sk: &HpkePrivateKey, enc: &HpkeEnc,
+setup_receiver_and_export(ctx: &Context, recipient_sk: &HpkePrivateKey, enc: &HpkeEnc,
                           info, exporter_context, exporter_length) -> SecretBytes
 ```
+
+`ctx` is a [`Context`](#cryptocontext-domain-separation-labels), not a
+string; it is the domain-separation tag threaded through the keypair
+derivation, the KEM, and the key schedule. Do not confuse it with the
+per-session `HpkeSenderContext` / `HpkeReceiverContext` below (an RFC
+9180 term for the established encryption state).
 
 `derive_keypair` derives both halves deterministically from `ikm`, so
 the same seed always yields the same keypair. `info` binds the key
@@ -314,7 +372,8 @@ with that feature.
 
 ```rust
 // Initialization
-KeyManager::start(base_dir, kind, mk_provider) -> Result<KeyManager<P>>
+KeyManager::start(base_dir, kind, mk_provider) -> Result<KeyManager<P>>              // fail-closed locking
+KeyManager::start_best_effort(base_dir, kind, mk_provider) -> Result<KeyManager<P>>  // opt-in unlocked fallback
 
 #[cfg(feature = "insecure-plaintext-mk")]  // dev/tests only
 KeyManager::start_plain(base_dir, kind) -> Result<KeyManager<InsecurePlaintextMkProvider>>
@@ -323,8 +382,9 @@ KeyManager::start_plain(base_dir, kind) -> Result<KeyManager<InsecurePlaintextMk
 manager.with_signing_keys(|ed_seed: ArenaByte32, dili_sk: ArenaByte32| { ... }) -> Result<R>
 manager.with_x25519_and_kyber_sk(|x_seed: ArenaByte32, kyber_sk: ArenaByte64| { ... }) -> Result<R>
 
-// Public keys
+// Public keys / memory-locking state
 manager.public_keys() -> &PublicKeys
+manager.memory_locked() -> bool   // is the secret arena wired into RAM?
 
 // Derived secrets (label-based)
 manager.derive_secret32(label: &[u8]) -> Result<SecByte32>
@@ -339,7 +399,13 @@ second `start` on the same directory returns `keystore_locked`. This is a
 single-writer contract on a local filesystem (`flock` is unreliable over
 NFS); scaling out means one store directory per instance, not sharing one.
 
-`KeyManager` owns a small `SecretArena` (see `secrets::arena`).
+`KeyManager` owns a small `SecretArena` (see `secrets::arena`). `start`
+is fail-closed: if that arena cannot be locked into RAM it returns an
+error. `start_best_effort` is the deliberate opt-in that instead
+proceeds on swappable memory; `memory_locked()` then reports the actual
+state (log or attest it, do not surface it as a user prompt). The two
+constructors are the `MemoryLocking::{Require, BestEffort}` policy,
+re-exported as `keys::MemoryLocking`.
 Private keys are load-on-demand: the callback receives them as 
 arena-backed handles (`ArenaByte32`, `ArenaByte64`) decrypted 
 into locked memory for the call and dropped after. Confinement past 
@@ -468,10 +534,25 @@ SecretJson::with_exposed(|value| { ... }) -> R         // access to serde_json::
 
 Per-value zeroize does not stop a secret from being swapped to disk 
 or captured in a core dump before it is cleared. `SecretArena` holds 
-long-lived key material in an `mmap` region that is `mlock`-ed (never 
-swapped) and `madvise(MADV_DONTDUMP)`-marked (excluded from core 
-dumps). A secret is *born* in the locked region, not locked after 
-the fact.
+long-lived key material in a private memory region that is locked into 
+RAM (never swapped) and, where the OS supports it, excluded from core 
+dumps. A secret is *born* in the locked region, not locked after the 
+fact.
+
+The region is cross-platform, behind one internal OS layer:
+
+- Unix (Linux, Android, iOS, macOS): `mmap` + `mlock`, plus
+  `madvise(MADV_DONTDUMP)` on Linux and Android (Darwin has no
+  equivalent; `RLIMIT_CORE 0` from `harden_process` covers dumps there).
+- Windows: `VirtualAlloc` + `VirtualLock`.
+
+Locking is fail-closed by default: if the pages cannot be locked
+(typically a low `RLIMIT_MEMLOCK` or working-set quota),
+`with_capacity` returns an error rather than handing back swappable
+memory. An embedder that genuinely cannot lock memory opts into
+`with_capacity_best_effort`, a deliberate, in-code choice; the silent
+downgrade is never made for it, and `is_locked()` reports the actual
+state (for logs / attestation, never a runtime prompt to a user).
 
 The `SecretArena` allocator itself is `pub(crate)`; it is wired in by
 `KeyManager`, not driven directly by embedders. The public surface is
@@ -481,7 +562,9 @@ the fixed-size handle type and its aliases, re-exported at `secrets`
 
 ```rust
 // SecretArena is pub(crate); shown here for context.
-SecretArena::with_capacity(bytes) -> Result<Self>
+SecretArena::with_capacity(bytes) -> Result<Self>              // fail-closed: Err if unlockable
+SecretArena::with_capacity_best_effort(bytes) -> Result<Self>  // opt-in: fall back to unlocked memory
+arena.is_locked() -> bool                                      // whether the pages are wired into RAM
 
 arena.random_fixed::<N>() -> Result<ArenaFixedBytes<N>>          // filled from the CSRNG in place
 arena.store_fixed::<N>(&[u8; N]) -> Result<ArenaFixedBytes<N>>   // copy a fixed-size secret in
@@ -491,7 +574,10 @@ arena.store_slice_fixed::<N>(&[u8]) -> Result<ArenaFixedBytes<N>>  // copy a sli
 //   to [u8], zeroized-and-reused on drop, redacted Debug; as_slice()/
 //   as_mut_slice()/as_array() -> &[u8; N]/len(); ct_eq PartialEq.
 
-harden_process() -> Result<()>   // opt-in: PR_SET_DUMPABLE 0 + RLIMIT_CORE 0
+harden_process() -> Result<()>   // opt-in, process-global; per OS:
+//   Linux/Android: PR_SET_DUMPABLE 0 + RLIMIT_CORE 0
+//   other unix (iOS/macOS): RLIMIT_CORE 0
+//   Windows: SetErrorMode + WerSetFlags(NOHEAP) (no full PR_SET_DUMPABLE analog)
 ```
 
 Scope is genuinely long-lived keys only (master key, seeds, 
@@ -722,6 +808,8 @@ Selected `ErrorKind` variants:
 - `KemInvalidCiphertext`: malformed KEM ciphertext
 - `InvalidPublicKey { reason }`: unusable public key (e.g. low-order point)
 - `KeyImportFailed { reason }`: raw bytes could not be parsed into a key
+- `InvalidContext { reason }`: a `crypto::Context` segment failed
+  validation (empty, contains `/`, non-graphic ASCII, or over 255 bytes)
 - `RandomFailed`: OS CSPRNG failure
 - `InvalidLength { expected, got }`: wrong buffer length
 - `InvalidHex` / `HexMustBeLowercase` / `HexDisallowedPrefix`: hex 
@@ -757,8 +845,28 @@ Selected `ErrorKind` variants:
 | `rand`          | 0.10.0      | CSRNG (`SysRng`)                           |
 
 The crate is `#![deny(unsafe_code)]`; the only `unsafe` is confined 
-to `secrets::arena` (the `mlock`/`madvise`/`mmap`/`prctl` FFI, added 
-via `libc`), behind a safe API.
+to `secrets::arena` (the locked-memory and process-hardening FFI),
+behind a safe API. The OS bindings are platform-scoped: `libc` on unix
+(`mmap`/`mlock`/`madvise`/`prctl`/`setrlimit`), `windows-sys` on Windows
+(`VirtualAlloc`/`VirtualLock`/`SetErrorMode`/`WerSetFlags`).
+
+---
+
+## Platforms and Cargo features
+
+The only platform-specific code is `secrets::arena` (locked memory +
+process hardening); the rest is portable pure Rust. `cargo check` is
+verified on `x86_64-unknown-linux-gnu`, `x86_64-pc-windows-msvc`,
+`aarch64-apple-ios`, and `aarch64-linux-android`. Platform dependencies
+are pulled only where they apply: `libc` under `cfg(unix)`,
+`windows-sys` under `cfg(windows)`.
+
+Cargo features (both off by default):
+
+- `insecure-plaintext-mk`: enables `InsecurePlaintextMkProvider` and
+  `KeyManager::start_plain`, which store the master key in cleartext.
+  For dev/tests only; never enable in production.
+- `fuzzing`: test-only hooks for the fuzz targets under `fuzz/`.
 
 ---
 

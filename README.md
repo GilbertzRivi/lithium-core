@@ -13,8 +13,9 @@ as *either* one holds:
 * **KDF / passwords** - HKDF-SHA256, Argon2
 
 The crate is `#![deny(unsafe_code)]` (the only `unsafe` is confined to `secrets::arena`, which
-wraps `mlock`/`madvise`/`mmap` behind a safe API), secret types zeroize on drop, and all
-domain-separation labels are supplied by the caller - the crypto itself is application-agnostic.
+wraps OS-locked memory behind a safe API - `mmap`/`mlock` on unix, `VirtualAlloc`/`VirtualLock`
+on Windows), secret types zeroize on drop, and all domain-separation labels are supplied by the
+caller as a validated `crypto::Context` - the crypto itself is application-agnostic.
 
 ## Two pillars
 
@@ -50,10 +51,11 @@ cargo run --example keyfile    # KeyManager identity persistence
 ```
 
 ```rust
-use lithium_core::crypto::{keys, kyberbox};
+use lithium_core::crypto::{Context, keys, kyberbox};
 use lithium_core::secrets::SecretBytes;
 
-let ctx = "myapp/message/v1";
+// Domain separation, built from validated segments; the library adds the /v1.
+let ctx = Context::base("myapp")?.add("message")?;
 
 let (recipient_priv_x, recipient_pub_x) = keys::random_x25519_keypair()?;
 let (recipient_kyber_priv, recipient_kyber_pub) = keys::random_kyber_mlkem1024_keypair()?;
@@ -61,19 +63,22 @@ let (sender_priv_x, sender_pub_x) = keys::random_x25519_keypair()?;
 
 let body = SecretBytes::from_slice(b"Hello world!");
 
-let wire = kyberbox::encrypt(
-    ctx,
+// `aad` is an optional caller header bound into the ciphertext (b"" = none).
+let wire = kyberbox::seal(
+    &ctx,
     &sender_priv_x,
     &recipient_pub_x,
     &recipient_kyber_pub,
+    b"",
     &body,
 )?;
 
-let plain = kyberbox::decrypt(
-    ctx,
+let plain = kyberbox::open(
+    &ctx,
     &recipient_priv_x,
     &sender_pub_x,
     &recipient_kyber_priv,
+    b"",
     &wire,
 )?;
 

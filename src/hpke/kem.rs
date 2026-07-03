@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Lithium Project
 // SPDX-License-Identifier: AGPL-3.0-only
 
+use crate::crypto::context::Context;
 use crate::crypto::keys;
 use crate::crypto::kyberbox::{prep_base_key_for_decryption, prep_base_key_for_encryption};
 use crate::error::Result;
@@ -9,7 +10,7 @@ use crate::public::{PubByte32, PublicBytes};
 use crate::secrets::{SecByte32, SecretBytes};
 
 pub fn kem_encap(
-    ctx: &str,
+    ctx: &Context,
     recipient_x_pub: &PubByte32,
     recipient_k_pub: &PublicBytes,
 ) -> Result<(SecByte32, HpkeEnc)> {
@@ -28,7 +29,7 @@ pub fn kem_encap(
 }
 
 pub fn kem_decap(
-    ctx: &str,
+    ctx: &Context,
     recipient_x_priv: &SecByte32,
     recipient_k_priv: &SecretBytes,
     enc: &HpkeEnc,

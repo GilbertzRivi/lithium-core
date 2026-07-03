@@ -60,12 +60,19 @@ separation are implemented faithfully.
 - Known-answer vectors (KAT): `tests/golden_tests.rs` (6 tests) on 
   data in `tests/testdata/` (`kyberbox_golden_v1`, 
   `mldsa87_verify_golden_v1`, `hpke_golden_v1`).
-- Public API tests: `crypto_tests` (86), `hpke_tests` (37), 
+- Public API tests: `crypto_tests` (87), `hpke_tests` (37), 
   `secret_tests` (66), `password_tests` (21), `store_tests` (14).
-- Fuzzing: 10 `cargo-fuzz` targets on the surfaces that parse 
+- Fuzzing: 12 `cargo-fuzz` targets on the surfaces that parse 
   untrusted input (`keyfile_parse`, `secret_json`, `opaque_parse`, 
   `kyberbox_decrypt`, `aead_decrypt`, `sign_verify`, `pow_verify`, 
-  `hpke_open`, `hpke_setup_receiver`, `hpke_wire`).
+  `hpke_open`, `hpke_setup_receiver`, `hpke_wire`, `hpke_stream`, 
+  `double_sig`). `fuzz/smoke.sh` runs every target in parallel for a 
+  fixed wall-clock budget (a quick regression sweep, not a deep 
+  campaign):
+
+  ```bash
+  ./fuzz/smoke.sh --timeout 300 --workers 30   # defaults: 60s, one worker per target
+  ```
 
 ## What the auditor gets
 

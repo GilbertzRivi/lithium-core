@@ -22,9 +22,130 @@ fn round_up(v: usize, to: usize) -> usize {
     v.div_ceil(to) * to
 }
 
+mod os {
+    use crate::error::{LithiumError, Result};
+
+    #[cfg(unix)]
+    mod imp {
+        use super::*;
+        use core::ptr;
+
+        pub fn page_size() -> usize {
+            unsafe { libc::sysconf(libc::_SC_PAGESIZE).max(1) as usize }
+        }
+
+        pub unsafe fn map(size: usize, require_lock: bool) -> Result<(*mut u8, bool)> {
+            unsafe {
+                let base = libc::mmap(
+                    ptr::null_mut(),
+                    size,
+                    libc::PROT_READ | libc::PROT_WRITE,
+                    libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+                    -1,
+                    0,
+                );
+                if base == libc::MAP_FAILED {
+                    return Err(LithiumError::io(std::io::Error::last_os_error()));
+                }
+                let base = base as *mut u8;
+
+                let locked = if libc::mlock(base as *const libc::c_void, size) == 0 {
+                    true
+                } else if require_lock {
+                    let e = std::io::Error::last_os_error();
+                    libc::munmap(base as *mut libc::c_void, size);
+                    return Err(LithiumError::io(e));
+                } else {
+                    false
+                };
+
+                #[cfg(any(target_os = "linux", target_os = "android"))]
+                libc::madvise(base as *mut libc::c_void, size, libc::MADV_DONTDUMP);
+
+                Ok((base, locked))
+            }
+        }
+
+        pub unsafe fn unmap(base: *mut u8, size: usize) {
+            unsafe {
+                libc::munlock(base as *const libc::c_void, size);
+                libc::munmap(base as *mut libc::c_void, size);
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    mod imp {
+        use super::*;
+        use core::ffi::c_void;
+        use core::ptr;
+        use windows_sys::Win32::System::Memory::{
+            MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_READWRITE, VirtualAlloc, VirtualFree,
+            VirtualLock, VirtualUnlock,
+        };
+        use windows_sys::Win32::System::SystemInformation::{GetSystemInfo, SYSTEM_INFO};
+
+        pub fn page_size() -> usize {
+            unsafe {
+                let mut info: SYSTEM_INFO = core::mem::zeroed();
+                GetSystemInfo(&mut info);
+                (info.dwPageSize as usize).max(1)
+            }
+        }
+
+        pub unsafe fn map(size: usize, require_lock: bool) -> Result<(*mut u8, bool)> {
+            unsafe {
+                let base =
+                    VirtualAlloc(ptr::null(), size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+                if base.is_null() {
+                    return Err(LithiumError::io(std::io::Error::last_os_error()));
+                }
+                let base = base as *mut u8;
+
+                let locked = if VirtualLock(base as *const c_void, size) != 0 {
+                    true
+                } else if require_lock {
+                    let e = std::io::Error::last_os_error();
+                    VirtualFree(base as *mut c_void, 0, MEM_RELEASE);
+                    return Err(LithiumError::io(e));
+                } else {
+                    false
+                };
+
+                Ok((base, locked))
+            }
+        }
+
+        pub unsafe fn unmap(base: *mut u8, size: usize) {
+            unsafe {
+                VirtualUnlock(base as *const c_void, size);
+                VirtualFree(base as *mut c_void, 0, MEM_RELEASE);
+            }
+        }
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    mod imp {
+        use super::*;
+
+        pub fn page_size() -> usize {
+            4096
+        }
+
+        pub unsafe fn map(_size: usize, _require_lock: bool) -> Result<(*mut u8, bool)> {
+            Err(LithiumError::internal("locked_memory_unsupported_platform"))
+        }
+
+        pub unsafe fn unmap(_base: *mut u8, _size: usize) {}
+    }
+
+    pub use imp::{map, page_size, unmap};
+}
+
 #[derive(Clone)]
 pub(crate) struct SecretArena {
     inner: Arc<Mutex<ArenaInner>>,
+    locked: bool,
 }
 
 struct ArenaInner {
@@ -66,12 +187,11 @@ impl ArenaInner {
 
 impl Drop for ArenaInner {
     fn drop(&mut self) {
-        // SAFETY: `base`/`size` come from the successful mmap+mlock in `with_capacity`
-        // and are released exactly once here; zero before unlocking and unmapping.
+        // SAFETY: `base`/`size` come from the successful `os::map` in the constructor
+        // and are released exactly once here; zero before unmapping.
         unsafe {
             ptr::write_bytes(self.base, 0, self.size);
-            libc::munlock(self.base as *const libc::c_void, self.size);
-            libc::munmap(self.base as *mut libc::c_void, self.size);
+            os::unmap(self.base, self.size);
         }
     }
 }
@@ -113,45 +233,31 @@ impl Drop for Region {
 
 impl SecretArena {
     pub fn with_capacity(bytes: usize) -> Result<Self> {
-        // SAFETY: standard anonymous private mapping; every raw operation is
-        // checked and unwound on failure, and the region is never exposed unlocked.
-        unsafe {
-            let page = libc::sysconf(libc::_SC_PAGESIZE).max(1) as usize;
-            let size = round_up(bytes.max(1), page);
+        Self::build(bytes, true)
+    }
 
-            let base = libc::mmap(
-                ptr::null_mut(),
+    pub fn with_capacity_best_effort(bytes: usize) -> Result<Self> {
+        Self::build(bytes, false)
+    }
+
+    fn build(bytes: usize, require_lock: bool) -> Result<Self> {
+        let size = round_up(bytes.max(1), os::page_size());
+        // SAFETY: `os::map` returns a live, page-aligned mapping of exactly `size`
+        // bytes (locked, or unlocked only when `require_lock` is false), or an error.
+        let (base, locked) = unsafe { os::map(size, require_lock)? };
+        Ok(Self {
+            inner: Arc::new(Mutex::new(ArenaInner {
+                base,
                 size,
-                libc::PROT_READ | libc::PROT_WRITE,
-                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
-                -1,
-                0,
-            );
-            if base == libc::MAP_FAILED {
-                return Err(LithiumError::io(std::io::Error::last_os_error()));
-            }
-            let base = base as *mut u8;
+                offset: 0,
+                free: HashMap::new(),
+            })),
+            locked,
+        })
+    }
 
-            if libc::mlock(base as *const libc::c_void, size) != 0 {
-                let e = std::io::Error::last_os_error();
-                libc::munmap(base as *mut libc::c_void, size);
-                return Err(LithiumError::io(e));
-            }
-
-            #[cfg(target_os = "linux")]
-            {
-                libc::madvise(base as *mut libc::c_void, size, libc::MADV_DONTDUMP);
-            }
-
-            Ok(Self {
-                inner: Arc::new(Mutex::new(ArenaInner {
-                    base,
-                    size,
-                    offset: 0,
-                    free: HashMap::new(),
-                })),
-            })
-        }
+    pub fn is_locked(&self) -> bool {
+        self.locked
     }
 
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, ArenaInner>> {
@@ -269,7 +375,7 @@ impl<const N: usize> fmt::Debug for ArenaFixedBytes<N> {
 }
 
 pub fn harden_process() -> Result<()> {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         // SAFETY: prctl with scalar args has no memory effects.
         if unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0) } != 0 {
@@ -289,12 +395,46 @@ pub fn harden_process() -> Result<()> {
         }
     }
 
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::System::Diagnostics::Debug::{
+            SEM_FAILCRITICALERRORS, SEM_NOGPFAULTERRORBOX, SetErrorMode,
+        };
+        use windows_sys::Win32::System::ErrorReporting::{
+            WER_FAULT_REPORTING_FLAG_NOHEAP, WerSetFlags,
+        };
+        // SAFETY: scalar-only Win32 calls with no memory effects.
+        unsafe {
+            SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+            if WerSetFlags(WER_FAULT_REPORTING_FLAG_NOHEAP) != 0 {
+                return Err(LithiumError::io(std::io::Error::last_os_error()));
+            }
+        }
+    }
+
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strict_arena_reports_locked() {
+        let arena = SecretArena::with_capacity(4096).unwrap();
+        assert!(
+            arena.is_locked(),
+            "with_capacity only succeeds when the pages are locked"
+        );
+    }
+
+    #[test]
+    fn best_effort_arena_is_usable_and_reports_lock_state() {
+        let arena = SecretArena::with_capacity_best_effort(4096).unwrap();
+        let h = arena.store_fixed::<32>(&[0x5A; 32]).unwrap();
+        assert_eq!(h.as_array(), &[0x5A; 32]);
+        let _ = arena.is_locked();
+    }
 
     #[test]
     fn random_fixed_is_filled_and_distinct() {

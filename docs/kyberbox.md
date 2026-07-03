@@ -25,13 +25,13 @@ replay. Those sit in the layers above.
 
 All versions are pinned in `Cargo.lock`.
 
-| Primitive | Implementation | Version |
-|---|---|---|
-| X25519 ECDH | `x25519-dalek` / `curve25519-dalek` | 2.0.1 / 4.1.3 |
-| ML-KEM-1024 | `ml-kem` (RustCrypto, pure Rust, FIPS 203) | 0.3.2 |
-| AES-256-GCM-SIV | `aes-gcm-siv` | 0.11.1 |
-| HKDF-SHA256 | `hkdf` + `sha2` | 0.12.4 / 0.10.9 |
-| CSRNG | `rand::rngs::SysRng` | - |
+| Primitive       | Implementation                             | Version         |
+|-----------------|--------------------------------------------|-----------------|
+| X25519 ECDH     | `x25519-dalek` / `curve25519-dalek`        | 2.0.1 / 4.1.3   |
+| ML-KEM-1024     | `ml-kem` (RustCrypto, pure Rust, FIPS 203) | 0.3.2           |
+| AES-256-GCM-SIV | `aes-gcm-siv`                              | 0.11.1          |
+| HKDF-SHA256     | `hkdf` + `sha2`                            | 0.12.4 / 0.10.9 |
+| CSRNG           | `rand::rngs::SysRng`                       | -               |
 
 ML-KEM-1024 is the RustCrypto `ml-kem` crate: a pure-Rust FIPS 203
 implementation, no C or FFI. The recipient key is a 1568-byte
@@ -48,8 +48,11 @@ The caller provides:
   key)
 - `peer_k_pub`: recipient's ML-KEM-1024 public key
 - `data`: the plaintext
-- `ctx`: a context string for domain separation 
-  (`"lithiumd/e2e-msg/v1"` in practice)
+- `ctx`: a `crypto::Context` for domain separation, built from segments
+  (`Context::base("lithiumd")?.add("e2e-msg")?` in practice; the `/v1`
+  suffix is added by the library)
+- `aad`: optional caller-supplied AAD (`&[u8]`, may be empty) for
+  binding the ciphertext to an external header/transcript
 
 ```
 msg_x_priv (32B) <-- CSRNG  -->  msg_x_pub (ct_T, sent as from_x_pub in WireV1)
@@ -68,10 +71,11 @@ Step 3: Base key (combination of both paths)
                               || SHA256(ct_kem))
 
 Step 4: Encrypt the payload
-  enc_data = [0x01] || nonce || AES-256-GCM-SIV(data, base_key, nonce,
-                                                 "{ctx}/data/v1")
+  data_aad = "{ctx}/data/v1"            (aad empty)
+           = "{ctx}/data/v1" || 0x00 || aad   (aad non-empty)
+  enc_data = [0x01] || nonce || AES-256-GCM-SIV(data, base_key, nonce, data_aad)
 
-Result: WirePayload { enc_data, kem_ct }
+Result: KyberBoxSealed { ciphertext = enc_data, kem_ct }
 ```
 
 Notes:
@@ -79,8 +83,11 @@ Notes:
 - `ct_T` is `msg_x_pub` (sender's ephemeral X25519 public key).
 - `ek_T` is `peer_pub_x` (recipient's X25519 public key).
 - `nonce` is 12 random bytes from the CSRNG, drawn per call.
-- `base_key` is used directly as the AEAD key; the AAD is
-  `"{ctx}/data/v1"`.
+- `base_key` is used directly as the AEAD key. The AAD is the `data`
+  label, plus the optional `aad` after a `0x00` separator. The label is
+  NUL-free, so the separator is unambiguous and a crafted `aad` cannot
+  impersonate another context. Empty `aad` leaves the wire unchanged;
+  `open` must supply the same `aad` or decryption fails.
 
 Decryption runs the same steps in reverse: parse `kem_ct`, 
 decapsulate `ss_kem` from `ct_kem`, rebuild the key chain from 
@@ -156,45 +163,11 @@ fresh-key-per-message property.
 **Sender authentication.** Nothing in KyberBox ties the ciphertext 
 to a sender. Anyone who knows `peer_k_pub` and `peer_pub_x` (or 
 intercepts `from_x_pub` in transit) can produce a valid 
-`WirePayload`. In Lithium the Ed25519 + ML-DSA-87 dual signature 
-over the plaintext provides authentication, 
-verified in `session.rs` before content is returned.
+`WirePayload`. 
 
 **Replay protection (at the KyberBox level).** A recorded 
 `WirePayload` resent to the same recipient still passes AEAD. 
-KyberBox binds no counter or state, and decryption does not consume 
-the RX key (`self_get_rx_privs` is a read, not a delete). Two 
-independent layers above handle replay.
-
-**Layer 1: the replay window in `session.rs`.** Each header 
-carries a rising sender counter `step`, in the signed header. After 
-the signature check and before any peer-state mutation, 
-`decrypt_with_privs` calls `peer_st.replay.check_and_record(hdr.step)` 
-(`ReplayWindow`, `state.rs:117-145`). It is a sliding window of 
-width 64. A duplicate `step`, or one below the window, is rejected 
-with `replayed_message_err()`. The window tolerates reordering of 
-new `step` values in range, because the RX key layer accepts 
-out-of-order messages anyway. Order matters (signature -> replay 
--> mutation): a forged `step` can't poison the window, and a 
-rejected replay leaves no partial state.
-
-**Layer 2: `msg_id` dedup in storage (defense in depth).** Each 
-message carries a random `msg_id` (16 B) in the signed header. 
-Auto-fetch (`traffic.rs`) stores it through `add_message` into a 
-table with a `UNIQUE(msg_id)` constraint. A repeat returns 
-`Ok(false)`, marks the item `duplicate`, and skips history. The 
-server also deletes a message on first fetch (one-time fetch), so 
-a real replay needs a malicious server re-injecting the frame. If 
-one slips past both, re-decryption is idempotent: sequence numbers 
-and generations only move forward.
-
-**Forward secrecy within one ratchet epoch.** The recipient's 
-X25519 key (`rx_x_priv`) lives until the recipient replies and the 
-sender switches keys. Every message in that epoch shares the X25519 
-component. Compromising `rx_x_priv` retroactively decrypts the ECDH 
-part of all messages under that key. The ML-KEM path still gives 
-per-message separation (unique `ss_kem`), but a broken ML-KEM plus 
-a recovered `rx_x_priv` opens the whole epoch.
+KyberBox binds no counter or state.
 
 **Binding through `base_key`.** `enc_data` and `kem_ct` are 
 independent blobs with no shared MAC. The binding runs through 
@@ -243,12 +216,7 @@ out given the threat model.
   nonce-reuse resistance (SIV).
 
 KyberBox does not provide authentication, replay protection, or 
-forward secrecy on its own. The layers above do:
-
-- authentication and forward secrecy: `lithiumd/src/e2e/session.rs`
-- replay: a sliding window on the signed `step` (`ReplayWindow`) 
-  plus `msg_id` dedup with a `UNIQUE` constraint (`traffic.rs` + 
-  `add_message`), backed by one-time fetch on the server
+forward secrecy on its own.
 
 Main items for external validation:
 

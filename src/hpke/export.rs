@@ -1,7 +1,12 @@
 // SPDX-FileCopyrightText: 2026 Lithium Project
 // SPDX-License-Identifier: AGPL-3.0-only
 
-use crate::{crypto::kdf, error::Result, hpke::types::HpkeContext, secrets::SecretBytes};
+use crate::{
+    crypto::{context::Context, kdf},
+    error::Result,
+    hpke::types::HpkeContext,
+    secrets::SecretBytes,
+};
 
 fn export_label(ctx: &str, exporter_context: &[u8]) -> SecretBytes {
     let mut info = Vec::new();
@@ -12,12 +17,17 @@ fn export_label(ctx: &str, exporter_context: &[u8]) -> SecretBytes {
 }
 
 pub fn export_secret(
-    ctx: &str,
+    ctx: &Context,
     hpke_ctx: &HpkeContext,
     exporter_context: &[u8],
     len: usize,
 ) -> Result<SecretBytes> {
     let input = SecretBytes::from_slice(hpke_ctx.exporter_secret.as_slice());
 
-    kdf::derive_bytes(&input, None, &export_label(ctx, exporter_context), len)
+    kdf::derive_bytes(
+        &input,
+        None,
+        export_label(ctx.as_str(), exporter_context).expose_as_slice(),
+        len,
+    )
 }

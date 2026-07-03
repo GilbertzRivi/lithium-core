@@ -109,6 +109,12 @@ pub struct PublicKeys {
     pub dilithium: PublicBytes,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MemoryLocking {
+    Require,
+    BestEffort,
+}
+
 pub struct KeyManager<P: MkProvider> {
     root_dir: PathBuf,
     pub_dir: PathBuf,
@@ -525,6 +531,19 @@ fn recover_pending_rotation_if_any<P: MkProvider>(
 
 impl<P: MkProvider> KeyManager<P> {
     pub fn start(base_dir: &Path, kind: KeyStoreKind, mk_provider: P) -> Result<Self> {
+        Self::start_with_locking(base_dir, kind, mk_provider, MemoryLocking::Require)
+    }
+
+    pub fn start_best_effort(base_dir: &Path, kind: KeyStoreKind, mk_provider: P) -> Result<Self> {
+        Self::start_with_locking(base_dir, kind, mk_provider, MemoryLocking::BestEffort)
+    }
+
+    fn start_with_locking(
+        base_dir: &Path,
+        kind: KeyStoreKind,
+        mk_provider: P,
+        locking: MemoryLocking,
+    ) -> Result<Self> {
         let root_dir = base_dir.join(kind.dir_name());
         let pub_dir = root_dir.join(PUB_DIR);
         let priv_dir = root_dir.join(PRIV_DIR);
@@ -563,7 +582,10 @@ impl<P: MkProvider> KeyManager<P> {
 
         let root_mk = mk_provider.load_mk()?;
 
-        let arena = SecretArena::with_capacity(ARENA_CAPACITY)?;
+        let arena = match locking {
+            MemoryLocking::Require => SecretArena::with_capacity(ARENA_CAPACITY)?,
+            MemoryLocking::BestEffort => SecretArena::with_capacity_best_effort(ARENA_CAPACITY)?,
+        };
         let public_keys = ensure_asymmetric_material(&pub_dir, &priv_dir, &root_mk, &arena)?;
 
         Ok(Self {
@@ -593,6 +615,10 @@ impl<P: MkProvider> KeyManager<P> {
 
     pub fn public_keys(&self) -> &PublicKeys {
         &self.public_keys
+    }
+
+    pub fn memory_locked(&self) -> bool {
+        self.arena.is_locked()
     }
 
     pub fn set_rotate_interval(&mut self, interval: Duration) {

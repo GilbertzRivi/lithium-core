@@ -4,6 +4,7 @@
 use crate::hpke::aead::open;
 use crate::hpke::kem::kem_decap;
 use crate::{
+    crypto::context::Context,
     error::Result,
     hpke::{aead::seal, kem::kem_encap, schedule::key_schedule, types::HpkeSealed},
     public::{PubByte32, PublicBytes},
@@ -11,7 +12,7 @@ use crate::{
 };
 
 pub fn seal_base(
-    ctx: &str,
+    ctx: &Context,
     recipient_x_pub: &PubByte32,
     recipient_k_pub: &PublicBytes,
     info: &[u8],
@@ -28,7 +29,7 @@ pub fn seal_base(
 }
 
 pub fn open_base(
-    ctx: &str,
+    ctx: &Context,
     recipient_x_priv: &SecByte32,
     recipient_k_priv: &SecretBytes,
     info: &[u8],

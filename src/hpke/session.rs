@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 use crate::{
-    crypto::aead,
+    crypto::{aead, context::Context},
     error::{LithiumError, Result},
     hpke::{
         kem::{kem_decap, kem_encap},
@@ -33,7 +33,7 @@ pub struct HpkeReceiverContext {
 }
 
 pub fn setup_sender(
-    ctx: &str,
+    ctx: &Context,
     recipient_pk: &HpkePublicKey,
     info: &[u8],
 ) -> Result<(HpkeEnc, HpkeSenderContext)> {
@@ -49,7 +49,7 @@ pub fn setup_sender(
 }
 
 pub fn setup_receiver(
-    ctx: &str,
+    ctx: &Context,
     recipient_sk: &HpkePrivateKey,
     enc: &HpkeEnc,
     info: &[u8],

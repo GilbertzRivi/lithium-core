@@ -5,12 +5,12 @@
 //!
 //! Run with: `cargo run -p lithium_core --example kyberbox`
 
-use lithium_core::crypto::{keys, kyberbox};
+use lithium_core::crypto::{Context, keys, kyberbox};
 use lithium_core::secrets::SecretBytes;
 
 fn main() -> lithium_core::Result<()> {
     // Caller-chosen domain separation; binds the ciphertext to one usage.
-    let ctx = "myapp/message/v1";
+    let ctx = Context::base("myapp")?.add("message")?;
 
     // Recipient advertises both a classical and a post-quantum public key.
     let (recipient_priv_x, recipient_pub_x) = keys::random_x25519_keypair()?;
@@ -22,18 +22,20 @@ fn main() -> lithium_core::Result<()> {
     let body = SecretBytes::from_slice(b"attack at dawn");
 
     let wire = kyberbox::seal(
-        ctx,
+        &ctx,
         &sender_priv_x,
         &recipient_pub_x,
         &recipient_kyber_pub,
+        b"",
         &body,
     )?;
 
     let plain_data = kyberbox::open(
-        ctx,
+        &ctx,
         &recipient_priv_x,
         &sender_pub_x,
         &recipient_kyber_priv,
+        b"",
         &wire,
     )?;
 

@@ -16,11 +16,7 @@ pub(crate) const ARGON2_T_COST: u32 = 3;
 pub(crate) const ARGON2_P_COST: u32 = 1;
 pub(crate) const ARGON2_OUT_LEN: usize = 32;
 
-pub fn derive32(
-    input: &SecretBytes,
-    salt: Option<&SecretBytes>,
-    info: &SecretBytes,
-) -> Result<SecByte32> {
+pub fn derive32(input: &SecretBytes, salt: Option<&SecretBytes>, info: &[u8]) -> Result<SecByte32> {
     let out = derive_bytes(input, salt, info, 32)?;
     SecByte32::from_slice(out.expose_as_slice())
 }
@@ -28,13 +24,13 @@ pub fn derive32(
 pub fn derive_bytes(
     input: &SecretBytes,
     salt: Option<&SecretBytes>,
-    info: &SecretBytes,
+    info: &[u8],
     len: usize,
 ) -> Result<SecretBytes> {
     let hk = Hkdf::<Sha256>::new(salt.map(|s| s.expose_as_slice()), input.expose_as_slice());
 
     let mut out = vec![0u8; len];
-    hk.expand(info.expose_as_slice(), &mut out)?;
+    hk.expand(info, &mut out)?;
 
     Ok(SecretBytes::new(out))
 }

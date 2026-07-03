@@ -10,11 +10,7 @@ use crate::secrets::{SecByte32, SecByte64, SecretString};
 const DEK_WRAP_VER: u8 = 1;
 
 fn wrap_key(export_key: &SecByte64, aad: &[u8]) -> Result<SecByte32> {
-    kdf::derive32(
-        &SecretBytes::from_slice(export_key.as_slice()),
-        None,
-        &SecretBytes::from_slice(aad),
-    )
+    kdf::derive32(&SecretBytes::from_slice(export_key.as_slice()), None, aad)
 }
 
 pub fn wrap_dek_under_export_key(

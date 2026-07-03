@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 use crate::{
+    crypto::context::Context,
     error::Result,
     hpke::{
         export::export_secret,
@@ -13,7 +14,7 @@ use crate::{
 };
 
 pub fn setup_sender_and_export(
-    ctx: &str,
+    ctx: &Context,
     recipient_pk: &HpkePublicKey,
     info: &[u8],
     exporter_context: &[u8],
@@ -29,7 +30,7 @@ pub fn setup_sender_and_export(
 }
 
 pub fn setup_receiver_and_export(
-    ctx: &str,
+    ctx: &Context,
     recipient_sk: &HpkePrivateKey,
     enc: &HpkeEnc,
     info: &[u8],

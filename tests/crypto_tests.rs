@@ -1,13 +1,22 @@
 // SPDX-FileCopyrightText: 2026 Lithium Project
 // SPDX-License-Identifier: AGPL-3.0-only
 
-use lithium_core::crypto::{aead, kdf, keys, kyberbox, sign};
+use lithium_core::crypto::{Context, aead, kdf, keys, kyberbox, sign};
 use lithium_core::error::ErrorKind;
 use lithium_core::public::{PubByte32, PublicBytes};
 use lithium_core::secrets::{SecByte12, SecByte32, SecretBytes};
 
 fn sb(data: &[u8]) -> SecretBytes {
     SecretBytes::from_slice(data)
+}
+
+fn ctx_of(s: &str) -> Context<'_> {
+    let mut parts = s.split('/');
+    let mut c = Context::base(parts.next().unwrap()).unwrap();
+    for p in parts {
+        c = c.add(p).unwrap();
+    }
+    c
 }
 
 fn pb(data: &[u8]) -> PublicBytes {
@@ -147,8 +156,8 @@ fn kdf_deterministic() {
     let salt = sb(b"random-salt");
     let info = sb(b"test/v1");
 
-    let k1 = kdf::derive32(&input, Some(&salt), &info).unwrap();
-    let k2 = kdf::derive32(&input, Some(&salt), &info).unwrap();
+    let k1 = kdf::derive32(&input, Some(&salt), info.expose_as_slice()).unwrap();
+    let k2 = kdf::derive32(&input, Some(&salt), info.expose_as_slice()).unwrap();
     assert_eq!(k1, k2);
 }
 
@@ -157,8 +166,8 @@ fn kdf_different_info_gives_different_key() {
     let input = sb(b"material");
     let salt = sb(b"salt");
 
-    let k1 = kdf::derive32(&input, Some(&salt), &sb(b"info-a/v1")).unwrap();
-    let k2 = kdf::derive32(&input, Some(&salt), &sb(b"info-b/v1")).unwrap();
+    let k1 = kdf::derive32(&input, Some(&salt), sb(b"info-a/v1").expose_as_slice()).unwrap();
+    let k2 = kdf::derive32(&input, Some(&salt), sb(b"info-b/v1").expose_as_slice()).unwrap();
     assert_ne!(k1, k2);
 }
 
@@ -166,8 +175,8 @@ fn kdf_different_info_gives_different_key() {
 fn kdf_different_input_gives_different_key() {
     let info = sb(b"common-info/v1");
 
-    let k1 = kdf::derive32(&sb(b"input-a"), None, &info).unwrap();
-    let k2 = kdf::derive32(&sb(b"input-b"), None, &info).unwrap();
+    let k1 = kdf::derive32(&sb(b"input-a"), None, info.expose_as_slice()).unwrap();
+    let k2 = kdf::derive32(&sb(b"input-b"), None, info.expose_as_slice()).unwrap();
     assert_ne!(k1, k2);
 }
 
@@ -176,20 +185,20 @@ fn kdf_with_and_without_salt_differ() {
     let input = sb(b"ikm");
     let info = sb(b"label/v1");
 
-    let k_with = kdf::derive32(&input, Some(&sb(b"salt")), &info).unwrap();
-    let k_without = kdf::derive32(&input, None, &info).unwrap();
+    let k_with = kdf::derive32(&input, Some(&sb(b"salt")), info.expose_as_slice()).unwrap();
+    let k_without = kdf::derive32(&input, None, info.expose_as_slice()).unwrap();
     assert_ne!(k_with, k_without);
 }
 
 #[test]
 fn kdf_output_is_32_bytes() {
-    let k = kdf::derive32(&sb(b"ikm"), None, &sb(b"info/v1")).unwrap();
+    let k = kdf::derive32(&sb(b"ikm"), None, sb(b"info/v1").expose_as_slice()).unwrap();
     assert_eq!(k.as_slice().len(), 32);
 }
 
 #[test]
 fn kdf_output_is_not_all_zeros() {
-    let k = kdf::derive32(&sb(b"ikm"), None, &sb(b"info/v1")).unwrap();
+    let k = kdf::derive32(&sb(b"ikm"), None, sb(b"info/v1").expose_as_slice()).unwrap();
     assert_ne!(k.as_slice(), &[0u8; 32]);
 }
 
@@ -367,8 +376,24 @@ fn kyberbox_roundtrip_body_and_headers() {
     let body = sb(b"secret message");
     let ctx = "test-context";
 
-    let wire = kyberbox::seal(ctx, &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &body).unwrap();
-    let dec_body = kyberbox::open(ctx, &bob_x_sk, &alice_x_pk, &bob_kyber_sk, &wire).unwrap();
+    let wire = kyberbox::seal(
+        &ctx_of(ctx),
+        &alice_x_sk,
+        &bob_x_pk,
+        &bob_kyber_pk,
+        b"",
+        &body,
+    )
+    .unwrap();
+    let dec_body = kyberbox::open(
+        &ctx_of(ctx),
+        &bob_x_sk,
+        &alice_x_pk,
+        &bob_kyber_sk,
+        b"",
+        &wire,
+    )
+    .unwrap();
 
     assert_eq!(dec_body.expose_as_slice(), body.expose_as_slice());
 }
@@ -378,8 +403,24 @@ fn kyberbox_empty_payload() {
     let (alice_x_sk, alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
 
-    let wire = kyberbox::seal("ctx", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &sb(b"")).unwrap();
-    let body = kyberbox::open("ctx", &bob_x_sk, &alice_x_pk, &bob_kyber_sk, &wire).unwrap();
+    let wire = kyberbox::seal(
+        &ctx_of("ctx"),
+        &alice_x_sk,
+        &bob_x_pk,
+        &bob_kyber_pk,
+        b"",
+        &sb(b""),
+    )
+    .unwrap();
+    let body = kyberbox::open(
+        &ctx_of("ctx"),
+        &bob_x_sk,
+        &alice_x_pk,
+        &bob_kyber_sk,
+        b"",
+        &wire,
+    )
+    .unwrap();
 
     assert!(body.expose_as_slice().is_empty());
 }
@@ -389,11 +430,61 @@ fn kyberbox_wrong_x25519_key_fails() {
     let (alice_x_sk, alice_x_pk, bob_kyber_sk, bob_kyber_pk, _bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
 
-    let wire = kyberbox::seal("ctx", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &sb(b"data")).unwrap();
+    let wire = kyberbox::seal(
+        &ctx_of("ctx"),
+        &alice_x_sk,
+        &bob_x_pk,
+        &bob_kyber_pk,
+        b"",
+        &sb(b"data"),
+    )
+    .unwrap();
 
     let (wrong_x_sk, _) = keys::random_x25519_keypair().unwrap();
-    let result = kyberbox::open("ctx", &wrong_x_sk, &alice_x_pk, &bob_kyber_sk, &wire);
+    let result = kyberbox::open(
+        &ctx_of("ctx"),
+        &wrong_x_sk,
+        &alice_x_pk,
+        &bob_kyber_sk,
+        b"",
+        &wire,
+    );
     assert!(result.is_err());
+}
+
+#[test]
+fn kyberbox_aad_binds_ciphertext() {
+    let (alice_x_sk, alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
+        kyberbox_alice_bob();
+
+    let wire = kyberbox::seal(
+        &ctx_of("ctx"),
+        &alice_x_sk,
+        &bob_x_pk,
+        &bob_kyber_pk,
+        b"header-v1",
+        &sb(b"data"),
+    )
+    .unwrap();
+
+    let open = |aad: &[u8]| {
+        kyberbox::open(
+            &ctx_of("ctx"),
+            &bob_x_sk,
+            &alice_x_pk,
+            &bob_kyber_sk,
+            aad,
+            &wire,
+        )
+    };
+
+    assert!(open(b"header-v2").is_err(), "wrong aad must fail");
+    assert!(open(b"").is_err(), "aad is bound; empty must fail");
+    assert_eq!(
+        open(b"header-v1").unwrap().expose_as_slice(),
+        b"data",
+        "matching aad must open"
+    );
 }
 
 #[test]
@@ -401,10 +492,25 @@ fn kyberbox_wrong_kyber_key_fails() {
     let (alice_x_sk, alice_x_pk, _bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
 
-    let wire = kyberbox::seal("ctx", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &sb(b"data")).unwrap();
+    let wire = kyberbox::seal(
+        &ctx_of("ctx"),
+        &alice_x_sk,
+        &bob_x_pk,
+        &bob_kyber_pk,
+        b"",
+        &sb(b"data"),
+    )
+    .unwrap();
 
     let (wrong_kyber_sk, _) = keys::random_kyber_mlkem1024_keypair().unwrap();
-    let result = kyberbox::open("ctx", &bob_x_sk, &alice_x_pk, &wrong_kyber_sk, &wire);
+    let result = kyberbox::open(
+        &ctx_of("ctx"),
+        &bob_x_sk,
+        &alice_x_pk,
+        &wrong_kyber_sk,
+        b"",
+        &wire,
+    );
     assert!(result.is_err());
 }
 
@@ -414,14 +520,22 @@ fn kyberbox_different_contexts_incompatible() {
         kyberbox_alice_bob();
 
     let wire = kyberbox::seal(
-        "context-a",
+        &ctx_of("context-a"),
         &alice_x_sk,
         &bob_x_pk,
         &bob_kyber_pk,
+        b"",
         &sb(b"data"),
     )
     .unwrap();
-    let result = kyberbox::open("context-b", &bob_x_sk, &alice_x_pk, &bob_kyber_sk, &wire);
+    let result = kyberbox::open(
+        &ctx_of("context-b"),
+        &bob_x_sk,
+        &alice_x_pk,
+        &bob_kyber_sk,
+        b"",
+        &wire,
+    );
     assert!(result.is_err());
 }
 
@@ -433,14 +547,23 @@ fn kyberbox_large_payload() {
     let big_data = vec![0xABu8; 16384];
 
     let wire = kyberbox::seal(
-        "large",
+        &ctx_of("large"),
         &alice_x_sk,
         &bob_x_pk,
         &bob_kyber_pk,
+        b"",
         &sb(&big_data),
     )
     .unwrap();
-    let body = kyberbox::open("large", &bob_x_sk, &alice_x_pk, &bob_kyber_sk, &wire).unwrap();
+    let body = kyberbox::open(
+        &ctx_of("large"),
+        &bob_x_sk,
+        &alice_x_pk,
+        &bob_kyber_sk,
+        b"",
+        &wire,
+    )
+    .unwrap();
 
     assert_eq!(body.expose_as_slice(), big_data.as_slice());
 }
@@ -602,14 +725,14 @@ fn aead_28_bytes_too_short_fails() {
 
 #[test]
 fn kdf_empty_ikm_still_works() {
-    let k = kdf::derive32(&sb(b""), None, &sb(b"info/v1")).unwrap();
+    let k = kdf::derive32(&sb(b""), None, sb(b"info/v1").expose_as_slice()).unwrap();
     assert_eq!(k.as_slice().len(), 32);
     assert_ne!(k.as_slice(), &[0u8; 32]);
 }
 
 #[test]
 fn kdf_empty_info_still_works() {
-    let k = kdf::derive32(&sb(b"ikm"), None, &sb(b"")).unwrap();
+    let k = kdf::derive32(&sb(b"ikm"), None, sb(b"").expose_as_slice()).unwrap();
     assert_eq!(k.as_slice().len(), 32);
 }
 
@@ -619,7 +742,7 @@ fn kdf_domain_separation_all_distinct() {
     let labels: &[&str] = &["a/v1", "b/v1", "c/v1", "d/v1", "e/v1"];
     let keys: Vec<_> = labels
         .iter()
-        .map(|l| kdf::derive32(&ikm, None, &sb(l.as_bytes())).unwrap())
+        .map(|l| kdf::derive32(&ikm, None, l.as_bytes()).unwrap())
         .collect();
     for i in 0..keys.len() {
         for j in (i + 1)..keys.len() {
@@ -635,7 +758,7 @@ fn kdf_salt_domain_separation() {
     let salts: &[&[u8]] = &[b"salt-a", b"salt-b", b"salt-c"];
     let keys: Vec<_> = salts
         .iter()
-        .map(|s| kdf::derive32(&ikm, Some(&sb(s)), &info).unwrap())
+        .map(|s| kdf::derive32(&ikm, Some(&sb(s)), info.expose_as_slice()).unwrap())
         .collect();
     for i in 0..keys.len() {
         for j in (i + 1)..keys.len() {
@@ -727,7 +850,15 @@ fn sign_dili_various_message_sizes() {
 fn kyberbox_corrupt_kem_byte_at(offset: usize) {
     let (alice_x_sk, alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
-    let wire = kyberbox::seal("ctx", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &sb(b"body")).unwrap();
+    let wire = kyberbox::seal(
+        &ctx_of("ctx"),
+        &alice_x_sk,
+        &bob_x_pk,
+        &bob_kyber_pk,
+        b"",
+        &sb(b"body"),
+    )
+    .unwrap();
 
     let mut kem_bytes = wire.kem_ct.as_slice().to_vec();
     assert!(offset < kem_bytes.len());
@@ -738,7 +869,15 @@ fn kyberbox_corrupt_kem_byte_at(offset: usize) {
         ciphertext: wire.ciphertext.clone(),
     };
     assert!(
-        kyberbox::open("ctx", &bob_x_sk, &alice_x_pk, &bob_kyber_sk, &corrupted).is_err(),
+        kyberbox::open(
+            &ctx_of("ctx"),
+            &bob_x_sk,
+            &alice_x_pk,
+            &bob_kyber_sk,
+            b"",
+            &corrupted
+        )
+        .is_err(),
         "corrupt kem_ct byte at offset {offset} must cause failure"
     );
 }
@@ -768,33 +907,77 @@ fn kyberbox_truncated_kem_ciphertext_fails() {
     let (alice_x_sk, alice_x_pk, _bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
     let (fresh_kyber_sk, _) = keys::random_kyber_mlkem1024_keypair().unwrap();
-    let wire = kyberbox::seal("ctx", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &sb(b"body")).unwrap();
+    let wire = kyberbox::seal(
+        &ctx_of("ctx"),
+        &alice_x_sk,
+        &bob_x_pk,
+        &bob_kyber_pk,
+        b"",
+        &sb(b"body"),
+    )
+    .unwrap();
 
     let truncated = PublicBytes::from_slice(&wire.kem_ct.as_slice()[..36]);
     let bad = kyberbox::KyberBoxSealed {
         kem_ct: truncated,
         ciphertext: wire.ciphertext.clone(),
     };
-    assert!(kyberbox::open("ctx", &bob_x_sk, &alice_x_pk, &fresh_kyber_sk, &bad).is_err());
+    assert!(
+        kyberbox::open(
+            &ctx_of("ctx"),
+            &bob_x_sk,
+            &alice_x_pk,
+            &fresh_kyber_sk,
+            b"",
+            &bad
+        )
+        .is_err()
+    );
 }
 
 #[test]
 fn kyberbox_empty_kem_ct_fails() {
     let (alice_x_sk, alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
-    let wire = kyberbox::seal("ctx", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &sb(b"body")).unwrap();
+    let wire = kyberbox::seal(
+        &ctx_of("ctx"),
+        &alice_x_sk,
+        &bob_x_pk,
+        &bob_kyber_pk,
+        b"",
+        &sb(b"body"),
+    )
+    .unwrap();
     let bad = kyberbox::KyberBoxSealed {
         kem_ct: pb(b""),
         ciphertext: wire.ciphertext.clone(),
     };
-    assert!(kyberbox::open("ctx", &bob_x_sk, &alice_x_pk, &bob_kyber_sk, &bad).is_err());
+    assert!(
+        kyberbox::open(
+            &ctx_of("ctx"),
+            &bob_x_sk,
+            &alice_x_pk,
+            &bob_kyber_sk,
+            b"",
+            &bad
+        )
+        .is_err()
+    );
 }
 
 #[test]
 fn kyberbox_corrupt_enc_data_tag_fails() {
     let (alice_x_sk, alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
-    let wire = kyberbox::seal("ctx", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &sb(b"body")).unwrap();
+    let wire = kyberbox::seal(
+        &ctx_of("ctx"),
+        &alice_x_sk,
+        &bob_x_pk,
+        &bob_kyber_pk,
+        b"",
+        &sb(b"body"),
+    )
+    .unwrap();
 
     let mut body_bytes = wire.ciphertext.as_slice().to_vec();
     let last = body_bytes.len() - 1;
@@ -804,14 +987,32 @@ fn kyberbox_corrupt_enc_data_tag_fails() {
         kem_ct: wire.kem_ct.clone(),
         ciphertext: PublicBytes::new(body_bytes),
     };
-    assert!(kyberbox::open("ctx", &bob_x_sk, &alice_x_pk, &bob_kyber_sk, &bad).is_err());
+    assert!(
+        kyberbox::open(
+            &ctx_of("ctx"),
+            &bob_x_sk,
+            &alice_x_pk,
+            &bob_kyber_sk,
+            b"",
+            &bad
+        )
+        .is_err()
+    );
 }
 
 #[test]
 fn kyberbox_corrupt_enc_data_version_fails() {
     let (alice_x_sk, alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
-    let wire = kyberbox::seal("ctx", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &sb(b"body")).unwrap();
+    let wire = kyberbox::seal(
+        &ctx_of("ctx"),
+        &alice_x_sk,
+        &bob_x_pk,
+        &bob_kyber_pk,
+        b"",
+        &sb(b"body"),
+    )
+    .unwrap();
 
     let mut body_bytes = wire.ciphertext.as_slice().to_vec();
     body_bytes[0] ^= 0xFF;
@@ -820,21 +1021,49 @@ fn kyberbox_corrupt_enc_data_version_fails() {
         kem_ct: wire.kem_ct.clone(),
         ciphertext: PublicBytes::new(body_bytes),
     };
-    assert!(kyberbox::open("ctx", &bob_x_sk, &alice_x_pk, &bob_kyber_sk, &bad).is_err());
+    assert!(
+        kyberbox::open(
+            &ctx_of("ctx"),
+            &bob_x_sk,
+            &alice_x_pk,
+            &bob_kyber_sk,
+            b"",
+            &bad
+        )
+        .is_err()
+    );
 }
 
 #[test]
 fn kyberbox_truncated_enc_body_fails() {
     let (alice_x_sk, alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
-    let wire = kyberbox::seal("ctx", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &sb(b"body")).unwrap();
+    let wire = kyberbox::seal(
+        &ctx_of("ctx"),
+        &alice_x_sk,
+        &bob_x_pk,
+        &bob_kyber_pk,
+        b"",
+        &sb(b"body"),
+    )
+    .unwrap();
 
     let truncated = PublicBytes::from_slice(&wire.ciphertext.as_slice()[..10]);
     let bad = kyberbox::KyberBoxSealed {
         kem_ct: wire.kem_ct.clone(),
         ciphertext: truncated,
     };
-    assert!(kyberbox::open("ctx", &bob_x_sk, &alice_x_pk, &bob_kyber_sk, &bad).is_err());
+    assert!(
+        kyberbox::open(
+            &ctx_of("ctx"),
+            &bob_x_sk,
+            &alice_x_pk,
+            &bob_kyber_sk,
+            b"",
+            &bad
+        )
+        .is_err()
+    );
 }
 
 #[test]
@@ -843,10 +1072,24 @@ fn kyberbox_roundtrip_various_payload_sizes() {
         kyberbox_alice_bob();
     for &size in &[0usize, 1, 15, 16, 32, 100, 1024] {
         let body = vec![0xBBu8; size];
-        let wire =
-            kyberbox::seal("sweep", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &sb(&body)).unwrap();
-        let dec_data =
-            kyberbox::open("sweep", &bob_x_sk, &alice_x_pk, &bob_kyber_sk, &wire).unwrap();
+        let wire = kyberbox::seal(
+            &ctx_of("sweep"),
+            &alice_x_sk,
+            &bob_x_pk,
+            &bob_kyber_pk,
+            b"",
+            &sb(&body),
+        )
+        .unwrap();
+        let dec_data = kyberbox::open(
+            &ctx_of("sweep"),
+            &bob_x_sk,
+            &alice_x_pk,
+            &bob_kyber_sk,
+            b"",
+            &wire,
+        )
+        .unwrap();
         assert_eq!(
             dec_data.expose_as_slice(),
             body.as_slice(),
@@ -858,7 +1101,7 @@ fn kyberbox_roundtrip_various_payload_sizes() {
 #[test]
 fn cross_kdf_then_aead_roundtrip() {
     let master = sb(b"master-key-material-for-cross-test");
-    let aead_key = kdf::derive32(&master, None, &sb(b"aead-key/v1")).unwrap();
+    let aead_key = kdf::derive32(&master, None, sb(b"aead-key/v1").expose_as_slice()).unwrap();
 
     let nonce = nonce12(0x42);
     let aad = b"cross-module-aad";
@@ -872,8 +1115,8 @@ fn cross_kdf_then_aead_roundtrip() {
 #[test]
 fn cross_kdf_derived_keys_not_usable_cross_purpose() {
     let master = sb(b"shared-master");
-    let key_a = kdf::derive32(&master, None, &sb(b"purpose-a/v1")).unwrap();
-    let key_b = kdf::derive32(&master, None, &sb(b"purpose-b/v1")).unwrap();
+    let key_a = kdf::derive32(&master, None, sb(b"purpose-a/v1").expose_as_slice()).unwrap();
+    let key_b = kdf::derive32(&master, None, sb(b"purpose-b/v1").expose_as_slice()).unwrap();
 
     let nonce = nonce12(0x43);
     let aad = b"aad";
@@ -927,8 +1170,24 @@ fn cross_kyberbox_nondeterministic_wire() {
         kyberbox_alice_bob();
     let body = sb(b"same body");
 
-    let wire1 = kyberbox::seal("ctx", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &body).unwrap();
-    let wire2 = kyberbox::seal("ctx", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &body).unwrap();
+    let wire1 = kyberbox::seal(
+        &ctx_of("ctx"),
+        &alice_x_sk,
+        &bob_x_pk,
+        &bob_kyber_pk,
+        b"",
+        &body,
+    )
+    .unwrap();
+    let wire2 = kyberbox::seal(
+        &ctx_of("ctx"),
+        &alice_x_sk,
+        &bob_x_pk,
+        &bob_kyber_pk,
+        b"",
+        &body,
+    )
+    .unwrap();
 
     assert_ne!(
         wire1.ciphertext.as_slice(),
@@ -943,18 +1202,20 @@ fn kyberbox_cross_ctx_kem_ct_transplant_fails() {
         kyberbox_alice_bob();
 
     let wire_alpha = kyberbox::seal(
-        "ctx-alpha",
+        &ctx_of("ctx-alpha"),
         &alice_x_sk,
         &bob_x_pk,
         &bob_kyber_pk,
+        b"",
         &sb(b"body"),
     )
     .unwrap();
     let wire_beta = kyberbox::seal(
-        "ctx-beta",
+        &ctx_of("ctx-beta"),
         &alice_x_sk,
         &bob_x_pk,
         &bob_kyber_pk,
+        b"",
         &sb(b"body"),
     )
     .unwrap();
@@ -964,7 +1225,15 @@ fn kyberbox_cross_ctx_kem_ct_transplant_fails() {
         ciphertext: wire_beta.ciphertext,
     };
     assert!(
-        kyberbox::open("ctx-beta", &bob_x_sk, &alice_x_pk, &bob_kyber_sk, &doctored).is_err(),
+        kyberbox::open(
+            &ctx_of("ctx-beta"),
+            &bob_x_sk,
+            &alice_x_pk,
+            &bob_kyber_sk,
+            b"",
+            &doctored
+        )
+        .is_err(),
         "kem_ct from a different ctx must not verify"
     );
 }
@@ -975,18 +1244,20 @@ fn kyberbox_cross_ctx_enc_body_transplant_fails() {
         kyberbox_alice_bob();
 
     let wire_alpha = kyberbox::seal(
-        "ctx-alpha",
+        &ctx_of("ctx-alpha"),
         &alice_x_sk,
         &bob_x_pk,
         &bob_kyber_pk,
+        b"",
         &sb(b"body"),
     )
     .unwrap();
     let wire_beta = kyberbox::seal(
-        "ctx-beta",
+        &ctx_of("ctx-beta"),
         &alice_x_sk,
         &bob_x_pk,
         &bob_kyber_pk,
+        b"",
         &sb(b"body"),
     )
     .unwrap();
@@ -996,7 +1267,15 @@ fn kyberbox_cross_ctx_enc_body_transplant_fails() {
         ciphertext: wire_alpha.ciphertext,
     };
     assert!(
-        kyberbox::open("ctx-beta", &bob_x_sk, &alice_x_pk, &bob_kyber_sk, &doctored).is_err(),
+        kyberbox::open(
+            &ctx_of("ctx-beta"),
+            &bob_x_sk,
+            &alice_x_pk,
+            &bob_kyber_sk,
+            b"",
+            &doctored
+        )
+        .is_err(),
         "enc_body from a different ctx must not decrypt"
     );
 }
@@ -1009,19 +1288,21 @@ fn kyberbox_wire_replay_to_different_recipient_fails() {
     let _ = (carol_x_pk, carol_kyber_pk);
 
     let wire = kyberbox::seal(
-        "session-a",
+        &ctx_of("session-a"),
         &alice_x_sk,
         &bob_x_pk,
         &bob_kyber_pk,
+        b"",
         &sb(b"secret"),
     )
     .unwrap();
 
     let result = kyberbox::open(
-        "session-b",
+        &ctx_of("session-b"),
         &carol_x_sk,
         &alice_x_pk,
         &carol_kyber_sk,
+        b"",
         &wire,
     );
     assert!(

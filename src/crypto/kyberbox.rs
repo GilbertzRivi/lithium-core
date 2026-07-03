@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 use x25519_dalek::{PublicKey as XPublicKey, StaticSecret as XStaticSecret};
 
 use crate::{
-    crypto::{aead, kdf, keys},
+    crypto::{aead, context::Context, kdf, keys},
     error::{LithiumError, Result},
     public::{PubByte32, PublicBytes},
     secrets::{SecByte32, bytes::SecretBytes},
@@ -26,12 +26,11 @@ pub struct KyberBoxSealed {
 }
 
 #[inline]
-fn label(ctx: &str, part: &str) -> SecretBytes {
-    SecretBytes::new(format!("{ctx}/{part}/v1").into_bytes())
-}
-
-#[inline]
-fn derive_ecdh_key(priv_x: &SecByte32, peer_pub_x: &PubByte32, ctx: &str) -> Result<SecByte32> {
+fn derive_ecdh_key(
+    priv_x: &SecByte32,
+    peer_pub_x: &PubByte32,
+    ecdh_label: &PublicBytes,
+) -> Result<SecByte32> {
     let my_secret = XStaticSecret::from(*priv_x.as_array());
     let peer_pub = XPublicKey::from(*peer_pub_x.as_array());
     let shared = my_secret.diffie_hellman(&peer_pub);
@@ -45,7 +44,7 @@ fn derive_ecdh_key(priv_x: &SecByte32, peer_pub_x: &PubByte32, ctx: &str) -> Res
     kdf::derive32(
         &SecretBytes::from_slice(shared_secret.as_slice()),
         None,
-        &label(ctx, "ecdh-key"),
+        ecdh_label.as_slice(),
     )
 }
 
@@ -59,17 +58,17 @@ fn derive_base_key(
     ct_t: &[u8; 32],
     ek_t: &[u8; 32],
     ct_pq_hash: &[u8; 32],
-    ctx: &str,
+    base_label: &PublicBytes,
 ) -> Result<SecByte32> {
     let ecdh_input = SecretBytes::from_slice(ecdh_key.as_slice());
     let ss_salt = SecretBytes::from_slice(ss_kem.as_slice());
 
-    let mut info = label(ctx, "base-key").expose_as_slice().to_vec();
+    let mut info = base_label.as_slice().to_vec();
     info.extend_from_slice(ct_t);
     info.extend_from_slice(ek_t);
     info.extend_from_slice(ct_pq_hash);
 
-    kdf::derive32(&ecdh_input, Some(&ss_salt), &SecretBytes::new(info))
+    kdf::derive32(&ecdh_input, Some(&ss_salt), &info)
 }
 
 fn encapsulate_kem(peer_kyber_pub: &[u8]) -> Result<(SecByte32, [u8; 32], PublicBytes)> {
@@ -128,66 +127,87 @@ fn decapsulate_kem(kyber_priv_bytes: &[u8], blob: &[u8]) -> Result<(SecByte32, [
 }
 
 pub(crate) fn prep_base_key_for_encryption(
-    ctx: &str,
+    ctx: &Context,
     priv_x: &SecByte32,
     peer_pub_x: &PubByte32,
     peer_k_pub: &PublicBytes,
 ) -> Result<(SecByte32, PublicBytes)> {
-    let ecdh_key = derive_ecdh_key(priv_x, peer_pub_x, ctx)?;
+    let ecdh_key = derive_ecdh_key(priv_x, peer_pub_x, &ctx.add("ecdh-key")?.label())?;
 
     let ct_t = *XPublicKey::from(&XStaticSecret::from(*priv_x.as_array())).as_bytes();
     let ek_t = *peer_pub_x.as_array();
 
     let (ss_kem, ct_hash, kem_ct) = encapsulate_kem(peer_k_pub.as_slice())?;
 
-    let base_key = derive_base_key(&ss_kem, &ecdh_key, &ct_t, &ek_t, &ct_hash, ctx)?;
+    let base_key = derive_base_key(
+        &ss_kem,
+        &ecdh_key,
+        &ct_t,
+        &ek_t,
+        &ct_hash,
+        &ctx.add("base-key")?.label(),
+    )?;
 
     Ok((base_key, kem_ct))
 }
 
 pub(crate) fn prep_base_key_for_decryption(
-    ctx: &str,
+    ctx: &Context,
     priv_x: &SecByte32,
     peer_pub_x: &PubByte32,
     kyber_priv: &SecretBytes,
     kem_ct: &PublicBytes,
 ) -> Result<SecByte32> {
-    let ecdh_key = derive_ecdh_key(priv_x, peer_pub_x, ctx)?;
+    let ecdh_key = derive_ecdh_key(priv_x, peer_pub_x, &ctx.add("ecdh-key")?.label())?;
 
     let ct_t = *peer_pub_x.as_array();
     let ek_t = *XPublicKey::from(&XStaticSecret::from(*priv_x.as_array())).as_bytes();
 
     let (ss_kem, ct_hash) = decapsulate_kem(kyber_priv.expose_as_slice(), kem_ct.as_slice())?;
 
-    let base_key = derive_base_key(&ss_kem, &ecdh_key, &ct_t, &ek_t, &ct_hash, ctx)?;
+    let base_key = derive_base_key(
+        &ss_kem,
+        &ecdh_key,
+        &ct_t,
+        &ek_t,
+        &ct_hash,
+        &ctx.add("base-key")?.label(),
+    )?;
 
     Ok(base_key)
 }
 
+// The 0x00 matters; label is NUL-free, concat bare, and you can bypass the Context.
+fn data_aad(ctx: &Context, aad: &[u8]) -> Result<Vec<u8>> {
+    let mut framed = ctx.add("data")?.label().as_slice().to_vec();
+    if !aad.is_empty() {
+        framed.push(0);
+        framed.extend_from_slice(aad);
+    }
+    Ok(framed)
+}
+
 pub fn seal(
-    ctx: &str,
+    ctx: &Context,
     priv_x: &SecByte32,
     peer_pub_x: &PubByte32,
     peer_k_pub: &PublicBytes,
+    aad: &[u8],
     data: &SecretBytes,
 ) -> Result<KyberBoxSealed> {
     let (base_key, kem_ct) = prep_base_key_for_encryption(ctx, priv_x, peer_pub_x, peer_k_pub)?;
     let nonce = keys::random_12()?;
-    let ciphertext = aead::encrypt(
-        data,
-        &base_key,
-        &nonce,
-        label(ctx, "data").expose_as_slice(),
-    )?;
+    let ciphertext = aead::encrypt(data, &base_key, &nonce, &data_aad(ctx, aad)?)?;
 
     Ok(KyberBoxSealed { ciphertext, kem_ct })
 }
 
 pub fn open(
-    ctx: &str,
+    ctx: &Context,
     priv_x: &SecByte32,
     peer_pub_x: &PubByte32,
     kyber_priv: &SecretBytes,
+    aad: &[u8],
     kyber_box_sealed: &KyberBoxSealed,
 ) -> Result<SecretBytes> {
     let base_key = prep_base_key_for_decryption(
@@ -200,7 +220,7 @@ pub fn open(
     let plaintext = aead::decrypt(
         &kyber_box_sealed.ciphertext,
         &base_key,
-        label(ctx, "data").expose_as_slice(),
+        &data_aad(ctx, aad)?,
     )?;
 
     Ok(plaintext)

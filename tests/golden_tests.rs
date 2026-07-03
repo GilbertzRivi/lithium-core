@@ -5,10 +5,19 @@ use std::collections::HashMap;
 
 use lithium_core::crypto::hash::sha256;
 use lithium_core::crypto::kyberbox::KyberBoxSealed;
-use lithium_core::crypto::{aead, kyberbox, sign};
+use lithium_core::crypto::{Context, aead, kyberbox, sign};
 use lithium_core::hpke::{self, HpkeEnc, HpkeSealed};
 use lithium_core::public::{PubByte32, PublicBytes};
 use lithium_core::secrets::{SecByte32, SecretBytes};
+
+fn ctx_of(s: &str) -> Context<'_> {
+    let mut parts = s.split('/');
+    let mut c = Context::base(parts.next().unwrap()).unwrap();
+    for p in parts {
+        c = c.add(p).unwrap();
+    }
+    c
+}
 
 fn hpke_vectors() -> HashMap<&'static str, &'static str> {
     include_str!("testdata/hpke_golden_v1.txt")
@@ -52,10 +61,11 @@ fn kyberbox_wire_decrypts_to_pinned_plaintext() {
     };
 
     let body = kyberbox::open(
-        "golden/kyberbox/v1",
+        &ctx_of("golden/kyberbox/v1"),
         &rx_x_priv,
         &msg_x_pub,
         &kyber_priv,
+        b"",
         &wire,
     )
     .unwrap();
@@ -94,7 +104,7 @@ fn hpke_derive_keypair_matches_pinned_vector() {
     let v = hpke_vectors();
     let ikm = hex::decode(v["KP_IKM"]).unwrap();
 
-    let (sk, pk) = hpke::derive_keypair(v["KP_CTX"], &ikm).unwrap();
+    let (sk, pk) = hpke::derive_keypair(&ctx_of(v["KP_CTX"]), &ikm).unwrap();
     let pk_wire = pk.to_wire();
 
     assert_eq!(hex::encode(&pk_wire[..32]), v["KP_X_PUB"]);
@@ -108,7 +118,8 @@ fn hpke_derive_keypair_matches_pinned_vector() {
 #[test]
 fn hpke_sealed_opens_to_pinned_plaintext() {
     let v = hpke_vectors();
-    let (sk, _) = hpke::derive_keypair(v["KP_CTX"], &hex::decode(v["KP_IKM"]).unwrap()).unwrap();
+    let (sk, _) =
+        hpke::derive_keypair(&ctx_of(v["KP_CTX"]), &hex::decode(v["KP_IKM"]).unwrap()).unwrap();
     let sk_wire = sk.to_wire();
     let sk_wire = sk_wire.expose_as_slice();
     let x_priv = SecByte32::from_slice(&sk_wire[..32]).unwrap();
@@ -121,7 +132,15 @@ fn hpke_sealed_opens_to_pinned_plaintext() {
         ciphertext: PublicBytes::from_hex(v["CIPHERTEXT"]).unwrap(),
     };
 
-    let pt = hpke::open_base(v["SEAL_CTX"], &x_priv, &k_priv, &info, &aad, &sealed).unwrap();
+    let pt = hpke::open_base(
+        &ctx_of(v["SEAL_CTX"]),
+        &x_priv,
+        &k_priv,
+        &info,
+        &aad,
+        &sealed,
+    )
+    .unwrap();
     assert_eq!(
         pt.expose_as_slice(),
         hex::decode(v["PLAINTEXT"]).unwrap().as_slice()
@@ -133,17 +152,28 @@ fn hpke_sealed_opens_to_pinned_plaintext() {
         enc: sealed.enc.clone(),
         ciphertext: PublicBytes::new(ct),
     };
-    assert!(hpke::open_base(v["SEAL_CTX"], &x_priv, &k_priv, &info, &aad, &tampered).is_err());
+    assert!(
+        hpke::open_base(
+            &ctx_of(v["SEAL_CTX"]),
+            &x_priv,
+            &k_priv,
+            &info,
+            &aad,
+            &tampered
+        )
+        .is_err()
+    );
 }
 
 #[test]
 fn hpke_export_reproduces_pinned_secret() {
     let v = hpke_vectors();
-    let (sk, _) = hpke::derive_keypair(v["KP_CTX"], &hex::decode(v["KP_IKM"]).unwrap()).unwrap();
+    let (sk, _) =
+        hpke::derive_keypair(&ctx_of(v["KP_CTX"]), &hex::decode(v["KP_IKM"]).unwrap()).unwrap();
     let enc = HpkeEnc::from_wire(&hex::decode(v["ENC2"]).unwrap()).unwrap();
 
     let exported = hpke::setup_receiver_and_export(
-        v["EXP_CTX"],
+        &ctx_of(v["EXP_CTX"]),
         &sk,
         &enc,
         &hex::decode(v["INFO"]).unwrap(),

@@ -126,6 +126,11 @@ impl LithiumError {
     }
 
     #[inline]
+    pub fn invalid_context(reason: &'static str) -> Self {
+        Self::new(ErrorKind::InvalidContext { reason })
+    }
+
+    #[inline]
     pub fn random_failed() -> Self {
         Self::new(ErrorKind::RandomFailed)
     }
@@ -260,6 +265,9 @@ pub enum ErrorKind {
     KeyImportFailed {
         reason: &'static str,
     },
+    InvalidContext {
+        reason: &'static str,
+    },
     RandomFailed,
     InvalidCredentials {
         msg: &'static str,
@@ -316,6 +324,7 @@ impl fmt::Display for ErrorKind {
             ErrorKind::KemInvalidCiphertext => write!(f, "invalid kem ciphertext"),
             ErrorKind::InvalidPublicKey { reason } => write!(f, "invalid public key: {reason}"),
             ErrorKind::KeyImportFailed { reason } => write!(f, "key import failed: {reason}"),
+            ErrorKind::InvalidContext { reason } => write!(f, "invalid context: {reason}"),
             ErrorKind::RandomFailed => write!(f, "random number generation failed"),
             ErrorKind::InvalidCredentials { msg } => write!(f, "invalid credentials: {msg}"),
             ErrorKind::InvalidPermissions { msg } => write!(f, "permission denied: {msg}"),

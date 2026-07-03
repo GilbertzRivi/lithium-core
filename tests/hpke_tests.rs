@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Lithium Project
 // SPDX-License-Identifier: AGPL-3.0-only
 
+use lithium_core::crypto::Context;
 use lithium_core::hpke::{self, HpkeEnc, HpkePrivateKey, HpkePublicKey, HpkeSealed};
 use lithium_core::public::{PubByte32, PublicBytes};
 use lithium_core::secrets::{SecByte32, SecretBytes};
@@ -13,8 +14,17 @@ fn sb(data: &[u8]) -> SecretBytes {
     SecretBytes::from_slice(data)
 }
 
+fn ctx_of(s: &str) -> Context<'_> {
+    let mut parts = s.split('/');
+    let mut c = Context::base(parts.next().unwrap()).unwrap();
+    for p in parts {
+        c = c.add(p).unwrap();
+    }
+    c
+}
+
 fn kp(ctx: &str, ikm: &[u8]) -> (HpkePrivateKey, HpkePublicKey) {
-    hpke::derive_keypair(ctx, ikm).unwrap()
+    hpke::derive_keypair(&ctx_of(ctx), ikm).unwrap()
 }
 
 fn pub_raw(pk: &HpkePublicKey) -> (PubByte32, PublicBytes) {
@@ -33,7 +43,7 @@ fn priv_raw(sk: &HpkePrivateKey) -> (SecByte32, SecretBytes) {
 
 fn seal(pk: &HpkePublicKey, ctx: &str, info: &[u8], aad: &[u8], pt: &[u8]) -> HpkeSealed {
     let (x_pub, k_pub) = pub_raw(pk);
-    hpke::seal_base(ctx, &x_pub, &k_pub, info, aad, &sb(pt)).unwrap()
+    hpke::seal_base(&ctx_of(ctx), &x_pub, &k_pub, info, aad, &sb(pt)).unwrap()
 }
 
 fn open(
@@ -44,7 +54,7 @@ fn open(
     sealed: &HpkeSealed,
 ) -> lithium_core::Result<SecretBytes> {
     let (x_priv, k_priv) = priv_raw(sk);
-    hpke::open_base(ctx, &x_priv, &k_priv, info, aad, sealed)
+    hpke::open_base(&ctx_of(ctx), &x_priv, &k_priv, info, aad, sealed)
 }
 
 fn enc_flip(enc: &HpkeEnc, idx: usize) -> HpkeEnc {
@@ -66,8 +76,10 @@ fn seal_open_roundtrip() {
 #[test]
 fn setup_export_sender_receiver_agree() {
     let (sk, pk) = kp(CTX, b"seed-b");
-    let (enc, sent) = hpke::setup_sender_and_export(CTX, &pk, INFO, b"exp-ctx", 32).unwrap();
-    let recv = hpke::setup_receiver_and_export(CTX, &sk, &enc, INFO, b"exp-ctx", 32).unwrap();
+    let (enc, sent) =
+        hpke::setup_sender_and_export(&ctx_of(CTX), &pk, INFO, b"exp-ctx", 32).unwrap();
+    let recv =
+        hpke::setup_receiver_and_export(&ctx_of(CTX), &sk, &enc, INFO, b"exp-ctx", 32).unwrap();
     assert_eq!(sent.expose_as_slice(), recv.expose_as_slice());
     assert_eq!(sent.len(), 32);
 }
@@ -217,24 +229,27 @@ fn seal_is_randomized() {
 #[test]
 fn export_wrong_ctx_disagrees() {
     let (sk, pk) = kp(CTX, b"s");
-    let (enc, sent) = hpke::setup_sender_and_export(CTX, &pk, INFO, b"e", 32).unwrap();
-    let recv = hpke::setup_receiver_and_export("bad-ctx", &sk, &enc, INFO, b"e", 32).unwrap();
+    let (enc, sent) = hpke::setup_sender_and_export(&ctx_of(CTX), &pk, INFO, b"e", 32).unwrap();
+    let recv =
+        hpke::setup_receiver_and_export(&ctx_of("bad-ctx"), &sk, &enc, INFO, b"e", 32).unwrap();
     assert_ne!(sent.expose_as_slice(), recv.expose_as_slice());
 }
 
 #[test]
 fn export_wrong_info_disagrees() {
     let (sk, pk) = kp(CTX, b"s");
-    let (enc, sent) = hpke::setup_sender_and_export(CTX, &pk, INFO, b"e", 32).unwrap();
-    let recv = hpke::setup_receiver_and_export(CTX, &sk, &enc, b"bad-info", b"e", 32).unwrap();
+    let (enc, sent) = hpke::setup_sender_and_export(&ctx_of(CTX), &pk, INFO, b"e", 32).unwrap();
+    let recv =
+        hpke::setup_receiver_and_export(&ctx_of(CTX), &sk, &enc, b"bad-info", b"e", 32).unwrap();
     assert_ne!(sent.expose_as_slice(), recv.expose_as_slice());
 }
 
 #[test]
 fn export_wrong_exporter_context_disagrees() {
     let (sk, pk) = kp(CTX, b"s");
-    let (enc, sent) = hpke::setup_sender_and_export(CTX, &pk, INFO, b"ctx-a", 32).unwrap();
-    let recv = hpke::setup_receiver_and_export(CTX, &sk, &enc, INFO, b"ctx-b", 32).unwrap();
+    let (enc, sent) = hpke::setup_sender_and_export(&ctx_of(CTX), &pk, INFO, b"ctx-a", 32).unwrap();
+    let recv =
+        hpke::setup_receiver_and_export(&ctx_of(CTX), &sk, &enc, INFO, b"ctx-b", 32).unwrap();
     assert_ne!(sent.expose_as_slice(), recv.expose_as_slice());
 }
 
@@ -242,15 +257,15 @@ fn export_wrong_exporter_context_disagrees() {
 fn export_mismatched_keys_disagree() {
     let (_, pk) = kp(CTX, b"key-a");
     let (sk_b, _) = kp(CTX, b"key-b");
-    let (enc, sent) = hpke::setup_sender_and_export(CTX, &pk, INFO, b"e", 32).unwrap();
-    let recv = hpke::setup_receiver_and_export(CTX, &sk_b, &enc, INFO, b"e", 32).unwrap();
+    let (enc, sent) = hpke::setup_sender_and_export(&ctx_of(CTX), &pk, INFO, b"e", 32).unwrap();
+    let recv = hpke::setup_receiver_and_export(&ctx_of(CTX), &sk_b, &enc, INFO, b"e", 32).unwrap();
     assert_ne!(sent.expose_as_slice(), recv.expose_as_slice());
 }
 
 #[test]
 fn export_len_zero_is_empty() {
     let (_, pk) = kp(CTX, b"s");
-    let (_, sent) = hpke::setup_sender_and_export(CTX, &pk, INFO, b"e", 0).unwrap();
+    let (_, sent) = hpke::setup_sender_and_export(&ctx_of(CTX), &pk, INFO, b"e", 0).unwrap();
     assert!(sent.expose_as_slice().is_empty());
 }
 
@@ -258,7 +273,7 @@ fn export_len_zero_is_empty() {
 fn export_len_is_honored() {
     let (_, pk) = kp(CTX, b"s");
     for len in [1usize, 16, 32, 64, 255, 1000] {
-        let (_, sent) = hpke::setup_sender_and_export(CTX, &pk, INFO, b"e", len).unwrap();
+        let (_, sent) = hpke::setup_sender_and_export(&ctx_of(CTX), &pk, INFO, b"e", len).unwrap();
         assert_eq!(sent.len(), len);
     }
 }
@@ -267,15 +282,15 @@ fn export_len_is_honored() {
 fn export_hkdf_max_len_ok_over_max_errors() {
     let (_, pk) = kp(CTX, b"s");
     // HKDF-SHA256 caps output at 255 * 32 = 8160 bytes.
-    assert!(hpke::setup_sender_and_export(CTX, &pk, INFO, b"e", 8160).is_ok());
-    assert!(hpke::setup_sender_and_export(CTX, &pk, INFO, b"e", 8161).is_err());
+    assert!(hpke::setup_sender_and_export(&ctx_of(CTX), &pk, INFO, b"e", 8160).is_ok());
+    assert!(hpke::setup_sender_and_export(&ctx_of(CTX), &pk, INFO, b"e", 8161).is_err());
 }
 
 #[test]
 fn export_shorter_len_is_prefix_of_longer() {
     let (sk, pk) = kp(CTX, b"s");
-    let (enc, short) = hpke::setup_sender_and_export(CTX, &pk, INFO, b"e", 32).unwrap();
-    let long = hpke::setup_receiver_and_export(CTX, &sk, &enc, INFO, b"e", 64).unwrap();
+    let (enc, short) = hpke::setup_sender_and_export(&ctx_of(CTX), &pk, INFO, b"e", 32).unwrap();
+    let long = hpke::setup_receiver_and_export(&ctx_of(CTX), &sk, &enc, INFO, b"e", 64).unwrap();
     assert_eq!(&long.expose_as_slice()[..32], short.expose_as_slice());
 }
 
@@ -394,7 +409,7 @@ fn full_wire_interop_seal_open() {
 
     let pk = HpkePublicKey::from_wire(&pk.to_wire()).unwrap();
     let (x_pub, k_pub) = pub_raw(&pk);
-    let sealed = hpke::seal_base(CTX, &x_pub, &k_pub, INFO, AAD, &sb(b"wire")).unwrap();
+    let sealed = hpke::seal_base(&ctx_of(CTX), &x_pub, &k_pub, INFO, AAD, &sb(b"wire")).unwrap();
 
     let enc = HpkeEnc::from_wire(&sealed.enc.to_wire()).unwrap();
     let ct = PublicBytes::new(sealed.ciphertext.as_slice().to_vec());
