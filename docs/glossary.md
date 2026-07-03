@@ -54,8 +54,9 @@ for the payload. See [`kyberbox.md`](kyberbox.md).
 supplied by an MkProvider; rotated every hour.
 
 **MkProvider** - the pluggable source of the MK. The one built-in 
-provider is `PlainFileMkProvider` (file); a caller that needs 
-hardware-backed storage implements its own.
+provider is `InsecurePlaintextMkProvider` (cleartext file, gated behind 
+the `insecure-plaintext-mk` feature, dev only); a production caller 
+implements its own sealing provider.
 
 **MkRotator** - the background task that wakes every 30 s and 
 rotates the MK once the interval passes (3600 s by default).

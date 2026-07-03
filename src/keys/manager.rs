@@ -75,17 +75,22 @@ pub trait MkProvider {
     }
 }
 
-pub struct PlainFileMkProvider {
+/// Stores the master key in cleartext on disk. Gated behind the
+/// "insecure-plaintext-mk" feature so it cannot reach production by accident
+#[cfg(feature = "insecure-plaintext-mk")]
+pub struct InsecurePlaintextMkProvider {
     path: PathBuf,
 }
 
-impl PlainFileMkProvider {
+#[cfg(feature = "insecure-plaintext-mk")]
+impl InsecurePlaintextMkProvider {
     pub fn new(path: PathBuf) -> Self {
         Self { path }
     }
 }
 
-impl MkProvider for PlainFileMkProvider {
+#[cfg(feature = "insecure-plaintext-mk")]
+impl MkProvider for InsecurePlaintextMkProvider {
     fn load_mk(&self) -> Result<SecByte32> {
         let bytes = keyfile::read_keyfile_bytes(&self.path)?;
         SecByte32::from_slice(bytes.expose_as_slice())
@@ -576,12 +581,13 @@ impl<P: MkProvider> KeyManager<P> {
         })
     }
 
+    #[cfg(feature = "insecure-plaintext-mk")]
     pub fn start_plain(
         base_dir: &Path,
         kind: KeyStoreKind,
-    ) -> Result<KeyManager<PlainFileMkProvider>> {
+    ) -> Result<KeyManager<InsecurePlaintextMkProvider>> {
         let mk_path = base_dir.join(kind.dir_name()).join("mk");
-        let provider = PlainFileMkProvider::new(mk_path);
+        let provider = InsecurePlaintextMkProvider::new(mk_path);
         KeyManager::start(base_dir, kind, provider)
     }
 

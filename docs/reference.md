@@ -273,7 +273,7 @@ rotation, and recovers an interrupted rotation.
     next-mk-new.keyf
     staged/                 (files before commit)
     ready                   (readiness marker)
-  mk                        (Master Key, PlainFileMkProvider)
+  mk                        (Master Key, InsecurePlaintextMkProvider)
 ```
 
 **Master Key rotation:**
@@ -302,16 +302,22 @@ pub trait MkProvider {
 }
 ```
 
-The default `PlainFileMkProvider` stores the MK as a binary file. 
-The trait is pluggable, `lithiumd` can plug in its own provider 
-based on the user's password and a server component.
+Production callers implement this trait to seal the MK (password, TPM,
+KMS, ...); see `examples/password_mkprovider.rs` and
+[`docs/mkprovider-examples.md`](mkprovider-examples.md). The only built-in
+provider is `InsecurePlaintextMkProvider`, which stores the MK in cleartext
+and is gated behind the non-default `insecure-plaintext-mk` feature so it
+cannot ship to production by accident; `start_plain` and the type only exist
+with that feature.
 
 **API:**
 
 ```rust
 // Initialization
 KeyManager::start(base_dir, kind, mk_provider) -> Result<KeyManager<P>>
-KeyManager::start_plain(base_dir, kind) -> Result<KeyManager<PlainFileMkProvider>>
+
+#[cfg(feature = "insecure-plaintext-mk")]  // dev/tests only
+KeyManager::start_plain(base_dir, kind) -> Result<KeyManager<InsecurePlaintextMkProvider>>
 
 // Access to private keys (callback pattern, loaded only for the call)
 manager.with_signing_keys(|ed_seed: ArenaByte32, dili_sk: ArenaByte32| { ... }) -> Result<R>

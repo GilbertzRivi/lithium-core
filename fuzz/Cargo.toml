@@ -86,3 +86,17 @@ path = "fuzz_targets/hpke_setup_receiver.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "double_sig"
+path = "fuzz_targets/double_sig.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "hpke_stream"
+path = "fuzz_targets/hpke_stream.rs"
+test = false
+doc = false
+bench = false

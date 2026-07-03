@@ -136,8 +136,10 @@ deliberately rather than silently.
 
 On-disk material is unaffected by all of this: private keys stay 
 sealed under the master key. Where the MK itself lives depends on 
-the `MkProvider` - `PlainFileMkProvider` keeps it in cleartext 
-(file perms only) and is not intended for production.
+the `MkProvider`. The only built-in one, `InsecurePlaintextMkProvider`, 
+keeps the MK in cleartext (file perms only); it is gated behind the 
+non-default `insecure-plaintext-mk` feature so a production build cannot 
+reach it by accident. Production callers supply a sealing provider.
 
 ## Out of scope (the library's non-goals)
 

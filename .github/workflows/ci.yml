@@ -94,7 +94,7 @@ jobs:
         run: |
           for t in keyfile_parse secret_json opaque_parse kyberbox_decrypt \
                    aead_decrypt sign_verify pow_verify hpke_open hpke_setup_receiver \
-                   hpke_wire; do
+                   hpke_wire double_sig hpke_stream; do
             echo "::group::$t"
             cargo +nightly fuzz run "$t" --target x86_64-unknown-linux-gnu -- -runs=20000 -max_total_time=20
             echo "::endgroup::"

@@ -40,13 +40,14 @@ labels are the caller's responsibility.
 The master key source is a trait, `MkProvider`, so the storage and protection
 of the MK are the caller's choice:
 
-* **`PlainFileMkProvider`** is the one built-in provider. The MK lives in a
-  file. This is the plain provider: it offers no protection beyond the file's
-  own permissions, so a production caller is expected to wrap or seal the MK
-  before handing it to the library.
-* A caller that needs password-backed, hardware-backed, TPM-backed, or other
-  application-specific protection implements its own `MkProvider` and passes it
-  to `KeyManager::start`.
+* **`InsecurePlaintextMkProvider`** is the only built-in provider. The MK lives
+  in a cleartext file with no protection beyond its permissions, so it is gated
+  behind the non-default `insecure-plaintext-mk` feature and meant for dev,
+  tests and examples only.
+* A production caller implements its own `MkProvider` for password-backed,
+  hardware-backed, TPM-backed, or other sealing and passes it to
+  `KeyManager::start`. See `examples/password_mkprovider.rs` and
+  [`mkprovider-examples.md`](mkprovider-examples.md).
 * The library only accesses the MK through `load_mk` and `store_mk`.
 
 Example caller-side wrapping strategy:
@@ -104,7 +105,7 @@ What the library's at-rest protection holds against:
 | Compromise                                                                          | What's exposed                                             | What's still protected                           |
 |-------------------------------------------------------------------------------------|------------------------------------------------------------|--------------------------------------------------|
 | Disk alone, without the MK or whatever the `MkProvider` uses to guard it            | public keys and encrypted `.keyf` blobs                    | private keys and sealed secrets                  |
-| Disk plus `PlainFileMkProvider` MK file                                             | all `.keyf` payloads can be decrypted                      | nothing protected by that MK                     |
+| Disk plus `InsecurePlaintextMkProvider` MK file                                     | all `.keyf` payloads can be decrypted                      | nothing protected by that MK                     |
 | Disk plus a properly sealed MK provider, but without the provider's unlock material | public keys and encrypted `.keyf` blobs                    | private keys and sealed secrets                  |
 | One old MK after a successful rotation                                              | `.keyf` files that were copied before the rotation         | current `.keyf` files rewrapped under the new MK |
 | Breaking ML-KEM **or** X25519 on its own                                            | no message content from the hybrid encryption construction | message content, as both branches are required   |

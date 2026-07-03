@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 use lithium_core::crypto::{keys, sign};
-use lithium_core::keys::{KeyManager, KeyStoreKind, PlainFileMkProvider};
+use lithium_core::keys::{KeyManager, KeyStoreKind};
+
+mod common;
+use common::FileMk;
 
 fn tmp_dir(tag: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!("lithium-km-arena-{tag}-{}", std::process::id()))
@@ -15,7 +18,7 @@ fn arena_backed_signing_keys_sign_and_verify() {
     let km = KeyManager::start(
         &dir,
         KeyStoreKind::Server,
-        PlainFileMkProvider::new(dir.join("mk")),
+        FileMk { path: dir.join("mk") },
     )
     .unwrap();
 
@@ -44,7 +47,7 @@ fn arena_backed_x25519_kyber_load_is_correct() {
     let km = KeyManager::start(
         &dir,
         KeyStoreKind::Server,
-        PlainFileMkProvider::new(dir.join("mk")),
+        FileMk { path: dir.join("mk") },
     )
     .unwrap();
 

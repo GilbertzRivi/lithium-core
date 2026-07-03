@@ -2,18 +2,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 use lithium_core::ErrorKind;
-use lithium_core::keys::{KeyManager, KeyStoreKind, PlainFileMkProvider};
+use lithium_core::keys::{KeyManager, KeyStoreKind};
+
+mod common;
+use common::FileMk;
 
 fn tmp_dir(tag: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!("lithium-km-lock-{tag}-{}", std::process::id()))
 }
 
-fn start(dir: &std::path::Path) -> lithium_core::Result<KeyManager<PlainFileMkProvider>> {
-    KeyManager::start(
-        dir,
-        KeyStoreKind::Server,
-        PlainFileMkProvider::new(dir.join("mk")),
-    )
+fn start(dir: &std::path::Path) -> lithium_core::Result<KeyManager<FileMk>> {
+    KeyManager::start(dir, KeyStoreKind::Server, FileMk { path: dir.join("mk") })
 }
 
 #[test]
@@ -45,13 +44,17 @@ fn different_kinds_do_not_contend() {
     let _server = KeyManager::start(
         &dir,
         KeyStoreKind::Server,
-        PlainFileMkProvider::new(dir.join("server-mk")),
+        FileMk {
+            path: dir.join("server-mk"),
+        },
     )
     .unwrap();
     let _user = KeyManager::start(
         &dir,
         KeyStoreKind::User,
-        PlainFileMkProvider::new(dir.join("user-mk")),
+        FileMk {
+            path: dir.join("user-mk"),
+        },
     )
     .expect("distinct store directories must not share a lock");
 
