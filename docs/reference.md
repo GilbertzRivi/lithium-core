@@ -82,18 +82,29 @@ Dual signature: every message is signed classically and
 post-quantum at the same time.
 
 ```
-// Ed25519 (classical)
-sign_message(message, priv_ed_seed) -> Vec<u8>           // 64 bytes
-verify_signature(message, signature: &[u8], pub_key: &PubByte32) -> bool
+// Hybrid: sign/verify both schemes as one unit (preferred)
+sign_double(message, ed_seed, dili_sk) -> DoubleSig
+verify_double(message, &DoubleSig, ed_pub: &PubByte32, dili_pub: &PublicBytes) -> bool
+DoubleSig::{to_bytes, from_bytes, to_hex, from_hex}   // ed(64) || dili wire form
 
-// ML-DSA-87 / Dilithium (post-quantum)
-sign_message_dili(message, dili_sk_bytes) -> Vec<u8>
+// Single-scheme primitives
+sign_message(message, priv_ed_seed) -> Vec<u8>           // Ed25519, 64 bytes
+verify_signature(message, signature: &[u8], pub_key: &PubByte32) -> bool
+sign_message_dili(message, dili_sk_bytes) -> Vec<u8>     // ML-DSA-87 / Dilithium
 verify_signature_dili(message, signature: &[u8], dili_pk_bytes: &PublicBytes) -> bool
 ```
 
 A signature is a public authenticator, not a secret, so it is
 returned as a plain `Vec<u8>`; verification takes the public key as a
 public type (`PubByte32` for Ed25519, `PublicBytes` for ML-DSA-87).
+
+`verify_double` is AND: it returns true only when both branches verify,
+so a forgery requires breaking both schemes and the result stays secure
+while either one holds. Prefer it over calling the two primitives
+separately, which lets a caller check only one branch and silently
+downgrade to a single scheme. `DoubleSig` owns the wire form
+(`ed(64) || dili`) so callers never hand-split the two signatures;
+`from_hex` enforces the crate's lowercase, no-prefix hex.
 
 #### `crypto::keys`: generating cryptographic material
 

@@ -69,3 +69,62 @@ pub fn verify_signature_dili(
 
     pk.verify(message, &sig).is_ok()
 }
+
+const ED25519_SIG_LEN: usize = 64;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DoubleSig {
+    ed: [u8; ED25519_SIG_LEN],
+    dili: Vec<u8>,
+}
+
+impl DoubleSig {
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(ED25519_SIG_LEN + self.dili.len());
+        out.extend_from_slice(&self.ed);
+        out.extend_from_slice(&self.dili);
+        out
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() <= ED25519_SIG_LEN {
+            return Err(LithiumError::invalid_len(ED25519_SIG_LEN + 1, bytes.len()));
+        }
+        let mut ed = [0u8; ED25519_SIG_LEN];
+        ed.copy_from_slice(&bytes[..ED25519_SIG_LEN]);
+        Ok(Self {
+            ed,
+            dili: bytes[ED25519_SIG_LEN..].to_vec(),
+        })
+    }
+
+    pub fn to_hex(&self) -> String {
+        hex::encode(self.to_bytes())
+    }
+
+    pub fn from_hex(s: &str) -> Result<Self> {
+        Self::from_bytes(&crate::hexcodec::decode_vec(s)?)
+    }
+}
+
+pub fn sign_double<E: AsRef<[u8]>, D: AsRef<[u8]>>(
+    message: &[u8],
+    ed_seed: E,
+    dili_sk: D,
+) -> Result<DoubleSig> {
+    let ed: [u8; ED25519_SIG_LEN] = sign_message(message, ed_seed)?
+        .try_into()
+        .map_err(|_| LithiumError::internal("ed25519_sig_len"))?;
+    let dili = sign_message_dili(message, dili_sk)?;
+    Ok(DoubleSig { ed, dili })
+}
+
+pub fn verify_double(
+    message: &[u8],
+    sig: &DoubleSig,
+    ed_pub: &PubByte32,
+    dili_pub: &PublicBytes,
+) -> bool {
+    verify_signature(message, &sig.ed, ed_pub)
+        && verify_signature_dili(message, &sig.dili, dili_pub)
+}
