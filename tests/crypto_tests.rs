@@ -389,8 +389,7 @@ fn kyberbox_wrong_x25519_key_fails() {
     let (alice_x_sk, alice_x_pk, bob_kyber_sk, bob_kyber_pk, _bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
 
-    let wire =
-        kyberbox::seal("ctx", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &sb(b"data")).unwrap();
+    let wire = kyberbox::seal("ctx", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &sb(b"data")).unwrap();
 
     let (wrong_x_sk, _) = keys::random_x25519_keypair().unwrap();
     let result = kyberbox::open("ctx", &wrong_x_sk, &alice_x_pk, &bob_kyber_sk, &wire);
@@ -402,8 +401,7 @@ fn kyberbox_wrong_kyber_key_fails() {
     let (alice_x_sk, alice_x_pk, _bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
 
-    let wire =
-        kyberbox::seal("ctx", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &sb(b"data")).unwrap();
+    let wire = kyberbox::seal("ctx", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &sb(b"data")).unwrap();
 
     let (wrong_kyber_sk, _) = keys::random_kyber_mlkem1024_keypair().unwrap();
     let result = kyberbox::open("ctx", &bob_x_sk, &alice_x_pk, &wrong_kyber_sk, &wire);
@@ -729,8 +727,7 @@ fn sign_dili_various_message_sizes() {
 fn kyberbox_corrupt_kem_byte_at(offset: usize) {
     let (alice_x_sk, alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
-    let wire =
-        kyberbox::seal("ctx", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &sb(b"body")).unwrap();
+    let wire = kyberbox::seal("ctx", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &sb(b"body")).unwrap();
 
     let mut kem_bytes = wire.kem_ct.as_slice().to_vec();
     assert!(offset < kem_bytes.len());
@@ -771,8 +768,7 @@ fn kyberbox_truncated_kem_ciphertext_fails() {
     let (alice_x_sk, alice_x_pk, _bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
     let (fresh_kyber_sk, _) = keys::random_kyber_mlkem1024_keypair().unwrap();
-    let wire =
-        kyberbox::seal("ctx", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &sb(b"body")).unwrap();
+    let wire = kyberbox::seal("ctx", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &sb(b"body")).unwrap();
 
     let truncated = PublicBytes::from_slice(&wire.kem_ct.as_slice()[..36]);
     let bad = kyberbox::KyberBoxSealed {
@@ -786,8 +782,7 @@ fn kyberbox_truncated_kem_ciphertext_fails() {
 fn kyberbox_empty_kem_ct_fails() {
     let (alice_x_sk, alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
-    let wire =
-        kyberbox::seal("ctx", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &sb(b"body")).unwrap();
+    let wire = kyberbox::seal("ctx", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &sb(b"body")).unwrap();
     let bad = kyberbox::KyberBoxSealed {
         kem_ct: pb(b""),
         ciphertext: wire.ciphertext.clone(),
@@ -799,8 +794,7 @@ fn kyberbox_empty_kem_ct_fails() {
 fn kyberbox_corrupt_enc_data_tag_fails() {
     let (alice_x_sk, alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
-    let wire =
-        kyberbox::seal("ctx", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &sb(b"body")).unwrap();
+    let wire = kyberbox::seal("ctx", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &sb(b"body")).unwrap();
 
     let mut body_bytes = wire.ciphertext.as_slice().to_vec();
     let last = body_bytes.len() - 1;
@@ -817,8 +811,7 @@ fn kyberbox_corrupt_enc_data_tag_fails() {
 fn kyberbox_corrupt_enc_data_version_fails() {
     let (alice_x_sk, alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
-    let wire =
-        kyberbox::seal("ctx", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &sb(b"body")).unwrap();
+    let wire = kyberbox::seal("ctx", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &sb(b"body")).unwrap();
 
     let mut body_bytes = wire.ciphertext.as_slice().to_vec();
     body_bytes[0] ^= 0xFF;
@@ -834,8 +827,7 @@ fn kyberbox_corrupt_enc_data_version_fails() {
 fn kyberbox_truncated_enc_body_fails() {
     let (alice_x_sk, alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
-    let wire =
-        kyberbox::seal("ctx", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &sb(b"body")).unwrap();
+    let wire = kyberbox::seal("ctx", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &sb(b"body")).unwrap();
 
     let truncated = PublicBytes::from_slice(&wire.ciphertext.as_slice()[..10]);
     let bad = kyberbox::KyberBoxSealed {

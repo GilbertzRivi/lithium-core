@@ -190,7 +190,13 @@ pub fn open(
     kyber_priv: &SecretBytes,
     kyber_box_sealed: &KyberBoxSealed,
 ) -> Result<SecretBytes> {
-    let base_key = prep_base_key_for_decryption(ctx, priv_x, peer_pub_x, kyber_priv, &kyber_box_sealed.kem_ct)?;
+    let base_key = prep_base_key_for_decryption(
+        ctx,
+        priv_x,
+        peer_pub_x,
+        kyber_priv,
+        &kyber_box_sealed.kem_ct,
+    )?;
     let plaintext = aead::decrypt(
         &kyber_box_sealed.ciphertext,
         &base_key,
