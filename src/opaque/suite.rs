@@ -23,6 +23,6 @@ pub type ClientLoginState = opaque_ke::ClientLogin<LithiumCipherSuite>;
 // must stay unset; the cost profile matches kdf::argon2id().
 pub(crate) fn opaque_ksf() -> Result<Argon2<'static>> {
     let params = Params::new(ARGON2_M_COST, ARGON2_T_COST, ARGON2_P_COST, None)
-        .map_err(|_| LithiumError::internal())?;
+        .map_err(|_| LithiumError::internal("argon2_params"))?;
     Ok(Argon2::new(Algorithm::Argon2id, Version::V0x13, params))
 }

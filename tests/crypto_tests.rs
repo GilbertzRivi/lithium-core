@@ -2,19 +2,24 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 use lithium_core::crypto::{aead, kdf, keys, kyberbox, sign};
-use lithium_core::error::CryptoErrorKind;
-use lithium_core::secrets::{Byte12, Byte32, SecretBytes};
+use lithium_core::error::ErrorKind;
+use lithium_core::public::{PubByte32, PublicBytes};
+use lithium_core::secrets::{SecByte12, SecByte32, SecretBytes};
 
 fn sb(data: &[u8]) -> SecretBytes {
     SecretBytes::from_slice(data)
 }
 
-fn key32(fill: u8) -> Byte32 {
-    Byte32::new([fill; 32])
+fn pb(data: &[u8]) -> PublicBytes {
+    PublicBytes::from_slice(data)
 }
 
-fn nonce12(fill: u8) -> Byte12 {
-    Byte12::new([fill; 12])
+fn key32(fill: u8) -> SecByte32 {
+    SecByte32::new([fill; 32])
+}
+
+fn nonce12(fill: u8) -> SecByte12 {
+    SecByte12::new([fill; 12])
 }
 
 #[test]
@@ -22,10 +27,10 @@ fn aead_raw_roundtrip() {
     let key = key32(0xAA);
     let nonce = nonce12(0x01);
     let plaintext = sb(b"hello aead");
-    let aad = sb(b"some-context");
+    let aad = b"some-context";
 
-    let ct = aead::encrypt_raw(&plaintext, &key, &nonce, &aad).unwrap();
-    let pt = aead::decrypt_raw(&ct, &key, &nonce, &aad).unwrap();
+    let ct = aead::encrypt_raw(&plaintext, &key, &nonce, aad).unwrap();
+    let pt = aead::decrypt_raw(&ct, &key, &nonce, aad).unwrap();
 
     assert_eq!(pt.expose_as_slice(), plaintext.expose_as_slice());
 }
@@ -35,10 +40,10 @@ fn aead_blob_roundtrip() {
     let key = key32(0xBB);
     let nonce = nonce12(0x02);
     let plaintext = sb(b"blob roundtrip test");
-    let aad = sb(b"aad-blob");
+    let aad = b"aad-blob";
 
-    let blob = aead::encrypt(&plaintext, &key, &nonce, &aad).unwrap();
-    let recovered = aead::decrypt(&blob, &key, &aad).unwrap();
+    let blob = aead::encrypt(&plaintext, &key, &nonce, aad).unwrap();
+    let recovered = aead::decrypt(&blob, &key, aad).unwrap();
 
     assert_eq!(recovered.expose_as_slice(), plaintext.expose_as_slice());
 }
@@ -47,17 +52,17 @@ fn aead_blob_roundtrip() {
 fn aead_blob_starts_with_version_byte() {
     let key = key32(0x01);
     let nonce = nonce12(0x00);
-    let blob = aead::encrypt(&sb(b"x"), &key, &nonce, &sb(b"aad")).unwrap();
-    assert_eq!(blob.expose_as_slice()[0], 1, "first byte must be version 1");
+    let blob = aead::encrypt(&sb(b"x"), &key, &nonce, b"aad").unwrap();
+    assert_eq!(blob.as_slice()[0], 1, "first byte must be version 1");
 }
 
 #[test]
 fn aead_blob_nonce_embedded() {
     let key = key32(0x01);
     let nonce = nonce12(0xCC);
-    let blob = aead::encrypt(&sb(b"data"), &key, &nonce, &sb(b"aad")).unwrap();
+    let blob = aead::encrypt(&sb(b"data"), &key, &nonce, b"aad").unwrap();
     assert_eq!(
-        &blob.expose_as_slice()[1..13],
+        &blob.as_slice()[1..13],
         &[0xCC; 12],
         "nonce must be at bytes 1..13"
     );
@@ -68,11 +73,11 @@ fn aead_wrong_key_fails() {
     let key = key32(0x10);
     let wrong_key = key32(0x11);
     let nonce = nonce12(0x03);
-    let aad = sb(b"ctx");
+    let aad = b"ctx";
 
-    let blob = aead::encrypt(&sb(b"secret"), &key, &nonce, &aad).unwrap();
-    let err = aead::decrypt(&blob, &wrong_key, &aad).unwrap_err();
-    assert_eq!(err.kind, CryptoErrorKind::AeadFailed);
+    let blob = aead::encrypt(&sb(b"secret"), &key, &nonce, aad).unwrap();
+    let err = aead::decrypt(&blob, &wrong_key, aad).unwrap_err();
+    assert_eq!(err.kind, ErrorKind::AeadFailed);
 }
 
 #[test]
@@ -80,26 +85,26 @@ fn aead_wrong_aad_fails() {
     let key = key32(0x20);
     let nonce = nonce12(0x04);
 
-    let blob = aead::encrypt(&sb(b"secret"), &key, &nonce, &sb(b"correct-aad")).unwrap();
-    let err = aead::decrypt(&blob, &key, &sb(b"wrong-aad")).unwrap_err();
-    assert_eq!(err.kind, CryptoErrorKind::AeadFailed);
+    let blob = aead::encrypt(&sb(b"secret"), &key, &nonce, b"correct-aad").unwrap();
+    let err = aead::decrypt(&blob, &key, b"wrong-aad").unwrap_err();
+    assert_eq!(err.kind, ErrorKind::AeadFailed);
 }
 
 #[test]
 fn aead_tampered_ciphertext_fails() {
     let key = key32(0x30);
     let nonce = nonce12(0x05);
-    let aad = sb(b"tamper-test");
+    let aad = b"tamper-test";
 
     let mut blob_vec = {
-        let blob = aead::encrypt(&sb(b"original"), &key, &nonce, &aad).unwrap();
-        blob.expose_as_slice().to_vec()
+        let blob = aead::encrypt(&sb(b"original"), &key, &nonce, aad).unwrap();
+        blob.as_slice().to_vec()
     };
     let last = blob_vec.len() - 1;
     blob_vec[last] ^= 0xFF;
 
-    let tampered = sb(&blob_vec);
-    let result = aead::decrypt(&tampered, &key, &aad);
+    let tampered = pb(&blob_vec);
+    let result = aead::decrypt(&tampered, &key, aad);
     assert!(result.is_err());
 }
 
@@ -107,10 +112,10 @@ fn aead_tampered_ciphertext_fails() {
 fn aead_empty_plaintext() {
     let key = key32(0xAB);
     let nonce = nonce12(0x06);
-    let aad = sb(b"empty");
+    let aad = b"empty";
 
-    let blob = aead::encrypt(&sb(b""), &key, &nonce, &aad).unwrap();
-    let pt = aead::decrypt(&blob, &key, &aad).unwrap();
+    let blob = aead::encrypt(&sb(b""), &key, &nonce, aad).unwrap();
+    let pt = aead::decrypt(&blob, &key, aad).unwrap();
     assert!(pt.expose_as_slice().is_empty());
 }
 
@@ -118,11 +123,11 @@ fn aead_empty_plaintext() {
 fn aead_large_plaintext() {
     let key = key32(0xCD);
     let nonce = nonce12(0x07);
-    let aad = sb(b"large");
+    let aad = b"large";
     let big = vec![0x42u8; 65536];
 
-    let blob = aead::encrypt(&sb(&big), &key, &nonce, &aad).unwrap();
-    let pt = aead::decrypt(&blob, &key, &aad).unwrap();
+    let blob = aead::encrypt(&sb(&big), &key, &nonce, aad).unwrap();
+    let pt = aead::decrypt(&blob, &key, aad).unwrap();
     assert_eq!(pt.expose_as_slice(), big.as_slice());
 }
 
@@ -130,11 +135,10 @@ fn aead_large_plaintext() {
 fn aead_truncated_blob_fails() {
     let key = key32(0x01);
     let nonce = nonce12(0x00);
-    let blob = aead::encrypt(&sb(b"data"), &key, &nonce, &sb(b"aad")).unwrap();
+    let blob = aead::encrypt(&sb(b"data"), &key, &nonce, b"aad").unwrap();
 
-    // blob must be at least 1+12+16 = 29 bytes; truncate to 10
-    let short = sb(&blob.expose_as_slice()[..10]);
-    assert!(aead::decrypt(&short, &key, &sb(b"aad")).is_err());
+    let short = pb(&blob.as_slice()[..10]);
+    assert!(aead::decrypt(&short, &key, b"aad").is_err());
 }
 
 #[test]
@@ -240,14 +244,14 @@ fn keys_ed25519_keypair_sizes() {
 fn keys_kyber_keypair_sizes() {
     let (sk, pk) = keys::random_kyber_mlkem1024_keypair().unwrap();
     assert_eq!(sk.expose_as_slice().len(), 64);
-    assert_eq!(pk.expose_as_slice().len(), 1568);
+    assert_eq!(pk.as_slice().len(), 1568);
 }
 
 #[test]
 fn keys_dilithium_keypair_sizes() {
     let (sk, pk) = keys::random_dilithium_mldsa87_keypair().unwrap();
     assert_eq!(sk.expose_as_slice().len(), 32);
-    assert_eq!(pk.expose_as_slice().len(), 2592);
+    assert_eq!(pk.as_slice().len(), 2592);
 }
 
 #[test]
@@ -256,18 +260,14 @@ fn sign_ed25519_roundtrip() {
     let msg = b"test message to sign";
 
     let sig = sign::sign_message(msg, seed.as_slice()).unwrap();
-    assert!(sign::verify_signature(msg, sig.expose_as_slice(), &pk));
+    assert!(sign::verify_signature(msg, sig.as_slice(), &pk));
 }
 
 #[test]
 fn sign_ed25519_wrong_message_fails() {
     let (seed, pk) = keys::random_ed25519_keypair().unwrap();
     let sig = sign::sign_message(b"original", seed.as_slice()).unwrap();
-    assert!(!sign::verify_signature(
-        b"tampered",
-        sig.expose_as_slice(),
-        &pk
-    ));
+    assert!(!sign::verify_signature(b"tampered", sig.as_slice(), &pk));
 }
 
 #[test]
@@ -277,11 +277,7 @@ fn sign_ed25519_wrong_key_fails() {
     let msg = b"test";
 
     let sig = sign::sign_message(msg, seed.as_slice()).unwrap();
-    assert!(!sign::verify_signature(
-        msg,
-        sig.expose_as_slice(),
-        &wrong_pk
-    ));
+    assert!(!sign::verify_signature(msg, sig.as_slice(), &wrong_pk));
 }
 
 #[test]
@@ -294,7 +290,7 @@ fn sign_ed25519_short_signature_fails() {
 fn sign_ed25519_signature_is_64_bytes() {
     let (seed, _) = keys::random_ed25519_keypair().unwrap();
     let sig = sign::sign_message(b"data", seed.as_slice()).unwrap();
-    assert_eq!(sig.expose_as_slice().len(), 64);
+    assert_eq!(sig.as_slice().len(), 64);
 }
 
 #[test]
@@ -302,7 +298,7 @@ fn sign_ed25519_different_messages_different_sigs() {
     let (seed, _) = keys::random_ed25519_keypair().unwrap();
     let sig1 = sign::sign_message(b"message-one", seed.as_slice()).unwrap();
     let sig2 = sign::sign_message(b"message-two", seed.as_slice()).unwrap();
-    assert_ne!(sig1.expose_as_slice(), sig2.expose_as_slice());
+    assert_ne!(sig1.as_slice(), sig2.as_slice());
 }
 
 #[test]
@@ -311,7 +307,7 @@ fn sign_dili_roundtrip() {
     let msg = b"dilithium test message";
 
     let sig = sign::sign_message_dili(msg, sk.expose_as_slice()).unwrap();
-    assert!(sign::verify_signature_dili(msg, sig.expose_as_slice(), &pk));
+    assert!(sign::verify_signature_dili(msg, sig.as_slice(), &pk));
 }
 
 #[test]
@@ -320,7 +316,7 @@ fn sign_dili_wrong_message_fails() {
     let sig = sign::sign_message_dili(b"original", sk.expose_as_slice()).unwrap();
     assert!(!sign::verify_signature_dili(
         b"tampered",
-        sig.expose_as_slice(),
+        sig.as_slice(),
         &pk
     ));
 }
@@ -332,11 +328,7 @@ fn sign_dili_wrong_key_fails() {
     let msg = b"test";
 
     let sig = sign::sign_message_dili(msg, sk.expose_as_slice()).unwrap();
-    assert!(!sign::verify_signature_dili(
-        msg,
-        sig.expose_as_slice(),
-        &wrong_pk
-    ));
+    assert!(!sign::verify_signature_dili(msg, sig.as_slice(), &wrong_pk));
 }
 
 #[test]
@@ -346,7 +338,14 @@ fn sign_dili_garbage_signature_fails() {
 }
 
 /// Returns: (alice_x_sk, alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk)
-fn kyberbox_alice_bob() -> (Byte32, Byte32, SecretBytes, SecretBytes, Byte32, Byte32) {
+fn kyberbox_alice_bob() -> (
+    SecByte32,
+    PubByte32,
+    SecretBytes,
+    PublicBytes,
+    SecByte32,
+    PubByte32,
+) {
     let (alice_x_sk, alice_x_pk) = keys::random_x25519_keypair().unwrap();
     let (bob_x_sk, bob_x_pk) = keys::random_x25519_keypair().unwrap();
     let (bob_kyber_sk, bob_kyber_pk) = keys::random_kyber_mlkem1024_keypair().unwrap();
@@ -452,101 +451,101 @@ fn kyberbox_large_payload() {
 fn aead_wrong_version_byte_fails() {
     let key = key32(0x01);
     let nonce = nonce12(0x00);
-    let mut blob = aead::encrypt(&sb(b"data"), &key, &nonce, &sb(b"aad"))
+    let mut blob = aead::encrypt(&sb(b"data"), &key, &nonce, b"aad")
         .unwrap()
-        .expose_as_slice()
+        .as_slice()
         .to_vec();
     blob[0] = 2;
-    assert!(aead::decrypt(&sb(&blob), &key, &sb(b"aad")).is_err());
+    assert!(aead::decrypt(&pb(&blob), &key, b"aad").is_err());
 }
 
 #[test]
 fn aead_version_zero_fails() {
     let key = key32(0x01);
     let nonce = nonce12(0x00);
-    let mut blob = aead::encrypt(&sb(b"data"), &key, &nonce, &sb(b"aad"))
+    let mut blob = aead::encrypt(&sb(b"data"), &key, &nonce, b"aad")
         .unwrap()
-        .expose_as_slice()
+        .as_slice()
         .to_vec();
     blob[0] = 0;
-    assert!(aead::decrypt(&sb(&blob), &key, &sb(b"aad")).is_err());
+    assert!(aead::decrypt(&pb(&blob), &key, b"aad").is_err());
 }
 
 #[test]
 fn aead_bit_flip_in_nonce_fails() {
     let key = key32(0x50);
     let nonce = nonce12(0x10);
-    let aad = sb(b"ctx");
-    let mut blob = aead::encrypt(&sb(b"payload"), &key, &nonce, &aad)
+    let aad = b"ctx";
+    let mut blob = aead::encrypt(&sb(b"payload"), &key, &nonce, aad)
         .unwrap()
-        .expose_as_slice()
+        .as_slice()
         .to_vec();
     blob[1] ^= 0x01;
-    assert!(aead::decrypt(&sb(&blob), &key, &aad).is_err());
+    assert!(aead::decrypt(&pb(&blob), &key, aad).is_err());
 }
 
 #[test]
 fn aead_bit_flip_in_nonce_last_byte_fails() {
     let key = key32(0x51);
     let nonce = nonce12(0x11);
-    let aad = sb(b"ctx");
-    let mut blob = aead::encrypt(&sb(b"payload"), &key, &nonce, &aad)
+    let aad = b"ctx";
+    let mut blob = aead::encrypt(&sb(b"payload"), &key, &nonce, aad)
         .unwrap()
-        .expose_as_slice()
+        .as_slice()
         .to_vec();
-    blob[12] ^= 0x80; // flip last nonce byte (byte index 12 = nonce[11])
-    assert!(aead::decrypt(&sb(&blob), &key, &aad).is_err());
+    blob[12] ^= 0x80;
+    assert!(aead::decrypt(&pb(&blob), &key, aad).is_err());
 }
 
 #[test]
 fn aead_bit_flip_in_ciphertext_first_byte_fails() {
     let key = key32(0x52);
     let nonce = nonce12(0x12);
-    let aad = sb(b"ctx");
-    let mut blob = aead::encrypt(&sb(b"hello world!!"), &key, &nonce, &aad)
+    let aad = b"ctx";
+    let mut blob = aead::encrypt(&sb(b"hello world!!"), &key, &nonce, aad)
         .unwrap()
-        .expose_as_slice()
+        .as_slice()
         .to_vec();
-    blob[13] ^= 0x01; // first byte of ciphertext+tag block
-    assert!(aead::decrypt(&sb(&blob), &key, &aad).is_err());
+    blob[13] ^= 0x01;
+    assert!(aead::decrypt(&pb(&blob), &key, aad).is_err());
 }
 
 #[test]
 fn aead_bit_flip_in_auth_tag_fails() {
     let key = key32(0x53);
     let nonce = nonce12(0x13);
-    let aad = sb(b"ctx");
-    let mut blob = aead::encrypt(&sb(b"message"), &key, &nonce, &aad)
+    let aad = b"ctx";
+    let mut blob = aead::encrypt(&sb(b"message"), &key, &nonce, aad)
         .unwrap()
-        .expose_as_slice()
+        .as_slice()
         .to_vec();
     let last = blob.len() - 1;
     blob[last] ^= 0x01;
-    assert!(aead::decrypt(&sb(&blob), &key, &aad).is_err());
+    assert!(aead::decrypt(&pb(&blob), &key, aad).is_err());
 }
 
 #[test]
 fn aead_aad_differs_by_one_byte_at_end_fails() {
     let key = key32(0x54);
     let nonce = nonce12(0x14);
-    let blob = aead::encrypt(&sb(b"secret"), &key, &nonce, &sb(b"correct-aad")).unwrap();
-    assert!(aead::decrypt(&blob, &key, &sb(b"correct-aaf")).is_err());
+    let blob = aead::encrypt(&sb(b"secret"), &key, &nonce, b"correct-aad").unwrap();
+    assert!(aead::decrypt(&blob, &key, b"correct-aaf").is_err());
 }
 
 #[test]
 fn aead_aad_differs_by_one_byte_at_start_fails() {
     let key = key32(0x55);
     let nonce = nonce12(0x15);
-    let blob = aead::encrypt(&sb(b"secret"), &key, &nonce, &sb(b"correct-aad")).unwrap();
-    assert!(aead::decrypt(&blob, &key, &sb(b"Xorrect-aad")).is_err());
+    let blob = aead::encrypt(&sb(b"secret"), &key, &nonce, b"correct-aad").unwrap();
+    assert!(aead::decrypt(&blob, &key, b"Xorrect-aad").is_err());
 }
 
 #[test]
 fn aead_empty_aad_roundtrip() {
     let key = key32(0x56);
     let nonce = nonce12(0x16);
-    let blob = aead::encrypt(&sb(b"no-aad"), &key, &nonce, &sb(b"")).unwrap();
-    let pt = aead::decrypt(&blob, &key, &sb(b"")).unwrap();
+    let blob = aead::encrypt(&sb(b"no-aad"), &key, &nonce, b"").unwrap();
+    let pt = aead::decrypt(&blob, &key, b"").unwrap();
     assert_eq!(pt.expose_as_slice(), b"no-aad");
 }
 
@@ -554,19 +553,19 @@ fn aead_empty_aad_roundtrip() {
 fn aead_non_empty_aad_not_accepted_as_empty() {
     let key = key32(0x57);
     let nonce = nonce12(0x17);
-    let blob = aead::encrypt(&sb(b"x"), &key, &nonce, &sb(b"real-aad")).unwrap();
-    assert!(aead::decrypt(&blob, &key, &sb(b"")).is_err());
+    let blob = aead::encrypt(&sb(b"x"), &key, &nonce, b"real-aad").unwrap();
+    assert!(aead::decrypt(&blob, &key, b"").is_err());
 }
 
 #[test]
 fn aead_roundtrip_various_sizes() {
     let key = key32(0x58);
     let nonce = nonce12(0x18);
-    let aad = sb(b"size-sweep");
+    let aad = b"size-sweep";
     for &size in &[0usize, 1, 7, 15, 16, 17, 31, 32, 33, 100, 1024, 8192] {
         let pt = vec![0x42u8; size];
-        let blob = aead::encrypt(&sb(&pt), &key, &nonce, &aad).unwrap();
-        let recovered = aead::decrypt(&blob, &key, &aad).unwrap();
+        let blob = aead::encrypt(&sb(&pt), &key, &nonce, aad).unwrap();
+        let recovered = aead::decrypt(&blob, &key, aad).unwrap();
         assert_eq!(recovered.expose_as_slice(), pt.as_slice(), "size={size}");
     }
 }
@@ -576,37 +575,35 @@ fn aead_raw_deterministic_same_inputs() {
     let key = key32(0x59);
     let nonce = nonce12(0x19);
     let pt = sb(b"deterministic-test");
-    let aad = sb(b"ctx");
-    let ct1 = aead::encrypt_raw(&pt, &key, &nonce, &aad).unwrap();
-    let ct2 = aead::encrypt_raw(&pt, &key, &nonce, &aad).unwrap();
+    let aad = b"ctx";
+    let ct1 = aead::encrypt_raw(&pt, &key, &nonce, aad).unwrap();
+    let ct2 = aead::encrypt_raw(&pt, &key, &nonce, aad).unwrap();
     assert_eq!(
-        ct1.expose_as_slice(),
-        ct2.expose_as_slice(),
+        ct1.as_slice(),
+        ct2.as_slice(),
         "AEAD-GCM-SIV must be deterministic for identical inputs"
     );
 }
 
 #[test]
 fn aead_min_size_blob_29_bytes() {
-    // empty plaintext is tag-only: blob = 1+12+16 = 29 bytes
     let key = key32(0x5A);
     let nonce = nonce12(0x1A);
-    let blob = aead::encrypt(&sb(b""), &key, &nonce, &sb(b"")).unwrap();
-    assert_eq!(blob.expose_as_slice().len(), 29, "min blob size must be 29");
+    let blob = aead::encrypt(&sb(b""), &key, &nonce, b"").unwrap();
+    assert_eq!(blob.as_slice().len(), 29, "min blob size must be 29");
 }
 
 #[test]
 fn aead_28_bytes_too_short_fails() {
     let key = key32(0x5B);
     let nonce = nonce12(0x1B);
-    let blob = aead::encrypt(&sb(b""), &key, &nonce, &sb(b"")).unwrap();
-    let short = sb(&blob.expose_as_slice()[..28]);
-    assert!(aead::decrypt(&short, &key, &sb(b"")).is_err());
+    let blob = aead::encrypt(&sb(b""), &key, &nonce, b"").unwrap();
+    let short = pb(&blob.as_slice()[..28]);
+    assert!(aead::decrypt(&short, &key, b"").is_err());
 }
 
 #[test]
 fn kdf_empty_ikm_still_works() {
-    // HKDF-SHA256 is defined for zero-length IKM
     let k = kdf::derive32(&sb(b""), None, &sb(b"info/v1")).unwrap();
     assert_eq!(k.as_slice().len(), 32);
     assert_ne!(k.as_slice(), &[0u8; 32]);
@@ -653,8 +650,8 @@ fn kdf_salt_domain_separation() {
 fn sign_ed25519_empty_message_roundtrip() {
     let (seed, pk) = keys::random_ed25519_keypair().unwrap();
     let sig = sign::sign_message(b"", seed.as_slice()).unwrap();
-    assert!(sign::verify_signature(b"", sig.expose_as_slice(), &pk));
-    assert!(!sign::verify_signature(b"x", sig.expose_as_slice(), &pk));
+    assert!(sign::verify_signature(b"", sig.as_slice(), &pk));
+    assert!(!sign::verify_signature(b"x", sig.as_slice(), &pk));
 }
 
 #[test]
@@ -663,17 +660,14 @@ fn sign_ed25519_deterministic() {
     let msg = b"deterministic";
     let sig1 = sign::sign_message(msg, seed.as_slice()).unwrap();
     let sig2 = sign::sign_message(msg, seed.as_slice()).unwrap();
-    assert_eq!(sig1.expose_as_slice(), sig2.expose_as_slice());
+    assert_eq!(sig1.as_slice(), sig2.as_slice());
 }
 
 #[test]
 fn sign_ed25519_tampered_sig_first_byte_fails() {
     let (seed, pk) = keys::random_ed25519_keypair().unwrap();
     let msg = b"message";
-    let mut sig = sign::sign_message(msg, seed.as_slice())
-        .unwrap()
-        .expose_as_slice()
-        .to_vec();
+    let mut sig = sign::sign_message(msg, seed.as_slice()).unwrap();
     sig[0] ^= 0x01;
     assert!(!sign::verify_signature(msg, &sig, &pk));
 }
@@ -682,10 +676,7 @@ fn sign_ed25519_tampered_sig_first_byte_fails() {
 fn sign_ed25519_tampered_sig_last_byte_fails() {
     let (seed, pk) = keys::random_ed25519_keypair().unwrap();
     let msg = b"message";
-    let mut sig = sign::sign_message(msg, seed.as_slice())
-        .unwrap()
-        .expose_as_slice()
-        .to_vec();
+    let mut sig = sign::sign_message(msg, seed.as_slice()).unwrap();
     let last = sig.len() - 1;
     sig[last] ^= 0x01;
     assert!(!sign::verify_signature(msg, &sig, &pk));
@@ -698,7 +689,7 @@ fn sign_ed25519_various_message_sizes() {
         let msg = vec![0x5Au8; size];
         let sig = sign::sign_message(&msg, seed.as_slice()).unwrap();
         assert!(
-            sign::verify_signature(&msg, sig.expose_as_slice(), &pk),
+            sign::verify_signature(&msg, sig.as_slice(), &pk),
             "size={size}"
         );
     }
@@ -708,22 +699,15 @@ fn sign_ed25519_various_message_sizes() {
 fn sign_dili_empty_message_roundtrip() {
     let (sk, pk) = keys::random_dilithium_mldsa87_keypair().unwrap();
     let sig = sign::sign_message_dili(b"", sk.expose_as_slice()).unwrap();
-    assert!(sign::verify_signature_dili(b"", sig.expose_as_slice(), &pk));
-    assert!(!sign::verify_signature_dili(
-        b"x",
-        sig.expose_as_slice(),
-        &pk
-    ));
+    assert!(sign::verify_signature_dili(b"", sig.as_slice(), &pk));
+    assert!(!sign::verify_signature_dili(b"x", sig.as_slice(), &pk));
 }
 
 #[test]
 fn sign_dili_tampered_sig_last_byte_fails() {
     let (sk, pk) = keys::random_dilithium_mldsa87_keypair().unwrap();
     let msg = b"dili-test";
-    let mut sig = sign::sign_message_dili(msg, sk.expose_as_slice())
-        .unwrap()
-        .expose_as_slice()
-        .to_vec();
+    let mut sig = sign::sign_message_dili(msg, sk.expose_as_slice()).unwrap();
     let last = sig.len() - 1;
     sig[last] ^= 0xFF;
     assert!(!sign::verify_signature_dili(msg, &sig, &pk));
@@ -736,7 +720,7 @@ fn sign_dili_various_message_sizes() {
         let msg = vec![0xA5u8; size];
         let sig = sign::sign_message_dili(&msg, sk.expose_as_slice()).unwrap();
         assert!(
-            sign::verify_signature_dili(&msg, sig.expose_as_slice(), &pk),
+            sign::verify_signature_dili(&msg, sig.as_slice(), &pk),
             "size={size}"
         );
     }
@@ -748,12 +732,12 @@ fn kyberbox_corrupt_kem_byte_at(offset: usize) {
     let wire =
         kyberbox::encrypt("ctx", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &sb(b"body")).unwrap();
 
-    let mut kem_bytes = wire.kem_ct.expose_as_slice().to_vec();
+    let mut kem_bytes = wire.kem_ct.as_slice().to_vec();
     assert!(offset < kem_bytes.len());
     kem_bytes[offset] ^= 0xFF;
 
     let corrupted = kyberbox::WirePayload {
-        kem_ct: SecretBytes::new(kem_bytes),
+        kem_ct: PublicBytes::new(kem_bytes),
         enc_data: wire.enc_data.clone(),
     };
     assert!(
@@ -786,11 +770,11 @@ fn kyberbox_corrupt_kem_ciphertext_mid_byte_fails() {
 fn kyberbox_truncated_kem_ciphertext_fails() {
     let (alice_x_sk, alice_x_pk, _bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
-    let (_, fresh_kyber_sk) = keys::random_kyber_mlkem1024_keypair().unwrap();
+    let (fresh_kyber_sk, _) = keys::random_kyber_mlkem1024_keypair().unwrap();
     let wire =
         kyberbox::encrypt("ctx", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &sb(b"body")).unwrap();
 
-    let truncated = SecretBytes::from_slice(&wire.kem_ct.expose_as_slice()[..36]);
+    let truncated = PublicBytes::from_slice(&wire.kem_ct.as_slice()[..36]);
     let bad = kyberbox::WirePayload {
         kem_ct: truncated,
         enc_data: wire.enc_data.clone(),
@@ -805,7 +789,7 @@ fn kyberbox_empty_kem_ct_fails() {
     let wire =
         kyberbox::encrypt("ctx", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &sb(b"body")).unwrap();
     let bad = kyberbox::WirePayload {
-        kem_ct: sb(b""),
+        kem_ct: pb(b""),
         enc_data: wire.enc_data.clone(),
     };
     assert!(kyberbox::decrypt("ctx", &bob_x_sk, &alice_x_pk, &bob_kyber_sk, &bad).is_err());
@@ -818,13 +802,13 @@ fn kyberbox_corrupt_enc_data_tag_fails() {
     let wire =
         kyberbox::encrypt("ctx", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &sb(b"body")).unwrap();
 
-    let mut body_bytes = wire.enc_data.expose_as_slice().to_vec();
+    let mut body_bytes = wire.enc_data.as_slice().to_vec();
     let last = body_bytes.len() - 1;
     body_bytes[last] ^= 0x01;
 
     let bad = kyberbox::WirePayload {
         kem_ct: wire.kem_ct.clone(),
-        enc_data: SecretBytes::new(body_bytes),
+        enc_data: PublicBytes::new(body_bytes),
     };
     assert!(kyberbox::decrypt("ctx", &bob_x_sk, &alice_x_pk, &bob_kyber_sk, &bad).is_err());
 }
@@ -836,12 +820,12 @@ fn kyberbox_corrupt_enc_data_version_fails() {
     let wire =
         kyberbox::encrypt("ctx", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &sb(b"body")).unwrap();
 
-    let mut body_bytes = wire.enc_data.expose_as_slice().to_vec();
+    let mut body_bytes = wire.enc_data.as_slice().to_vec();
     body_bytes[0] ^= 0xFF;
 
     let bad = kyberbox::WirePayload {
         kem_ct: wire.kem_ct.clone(),
-        enc_data: SecretBytes::new(body_bytes),
+        enc_data: PublicBytes::new(body_bytes),
     };
     assert!(kyberbox::decrypt("ctx", &bob_x_sk, &alice_x_pk, &bob_kyber_sk, &bad).is_err());
 }
@@ -853,8 +837,7 @@ fn kyberbox_truncated_enc_body_fails() {
     let wire =
         kyberbox::encrypt("ctx", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &sb(b"body")).unwrap();
 
-    // truncate enc_body to 10 bytes (< minimum 29)
-    let truncated = SecretBytes::from_slice(&wire.enc_data.expose_as_slice()[..10]);
+    let truncated = PublicBytes::from_slice(&wire.enc_data.as_slice()[..10]);
     let bad = kyberbox::WirePayload {
         kem_ct: wire.kem_ct.clone(),
         enc_data: truncated,
@@ -882,42 +865,38 @@ fn kyberbox_roundtrip_various_payload_sizes() {
 
 #[test]
 fn cross_kdf_then_aead_roundtrip() {
-    // Derive a key via KDF, then use it for AEAD - the two modules compose correctly.
     let master = sb(b"master-key-material-for-cross-test");
     let aead_key = kdf::derive32(&master, None, &sb(b"aead-key/v1")).unwrap();
 
     let nonce = nonce12(0x42);
-    let aad = sb(b"cross-module-aad");
+    let aad = b"cross-module-aad";
     let plaintext = sb(b"cross module plaintext");
 
-    let blob = aead::encrypt(&plaintext, &aead_key, &nonce, &aad).unwrap();
-    let recovered = aead::decrypt(&blob, &aead_key, &aad).unwrap();
+    let blob = aead::encrypt(&plaintext, &aead_key, &nonce, aad).unwrap();
+    let recovered = aead::decrypt(&blob, &aead_key, aad).unwrap();
     assert_eq!(recovered.expose_as_slice(), plaintext.expose_as_slice());
 }
 
 #[test]
 fn cross_kdf_derived_keys_not_usable_cross_purpose() {
-    // Two domain-separated keys from the same master must not decrypt each other's ciphertexts.
     let master = sb(b"shared-master");
     let key_a = kdf::derive32(&master, None, &sb(b"purpose-a/v1")).unwrap();
     let key_b = kdf::derive32(&master, None, &sb(b"purpose-b/v1")).unwrap();
 
     let nonce = nonce12(0x43);
-    let aad = sb(b"aad");
-    let blob = aead::encrypt(&sb(b"secret"), &key_a, &nonce, &aad).unwrap();
+    let aad = b"aad";
+    let blob = aead::encrypt(&sb(b"secret"), &key_a, &nonce, aad).unwrap();
 
-    assert!(aead::decrypt(&blob, &key_b, &aad).is_err());
+    assert!(aead::decrypt(&blob, &key_b, aad).is_err());
 }
 
 #[test]
 fn cross_ed25519_sign_verify_cross_keypair_fails() {
-    // A signature from keypair-A must not verify under keypair-B's public key,
-    // even when the message is identical.
     let (seed_a, _pk_a) = keys::random_ed25519_keypair().unwrap();
     let (_, pk_b) = keys::random_ed25519_keypair().unwrap();
     let msg = b"same message, different key";
     let sig = sign::sign_message(msg, seed_a.as_slice()).unwrap();
-    assert!(!sign::verify_signature(msg, sig.expose_as_slice(), &pk_b));
+    assert!(!sign::verify_signature(msg, sig.as_slice(), &pk_b));
 }
 
 #[test]
@@ -926,16 +905,11 @@ fn cross_dili_sign_verify_cross_keypair_fails() {
     let (_, pk_b) = keys::random_dilithium_mldsa87_keypair().unwrap();
     let msg = b"cross-key dilithium";
     let sig = sign::sign_message_dili(msg, sk_a.expose_as_slice()).unwrap();
-    assert!(!sign::verify_signature_dili(
-        msg,
-        sig.expose_as_slice(),
-        &pk_b
-    ));
+    assert!(!sign::verify_signature_dili(msg, sig.as_slice(), &pk_b));
 }
 
 #[test]
 fn cross_ed25519_and_dili_sigs_are_not_interchangeable() {
-    // Ed25519 sig must not verify as Dilithium sig and vice versa.
     let (ed_seed, ed_pk) = keys::random_ed25519_keypair().unwrap();
     let (dili_sk, dili_pk) = keys::random_dilithium_mldsa87_keypair().unwrap();
     let msg = b"cross-scheme";
@@ -945,21 +919,18 @@ fn cross_ed25519_and_dili_sigs_are_not_interchangeable() {
 
     assert!(!sign::verify_signature_dili(
         msg,
-        ed_sig.expose_as_slice(),
+        ed_sig.as_slice(),
         &dili_pk
     ));
-    // Dilithium sig does not verify under Ed25519 pk: wrong length returns false
     assert!(!sign::verify_signature(
         msg,
-        &dili_sig.expose_as_slice()[..64],
+        &dili_sig.as_slice()[..64],
         &ed_pk
     ));
 }
 
 #[test]
 fn cross_kyberbox_nondeterministic_wire() {
-    // KyberBox uses fresh random nonces on every encrypt call;
-    // two encryptions of the same plaintext must produce different wire payloads.
     let (alice_x_sk, _alice_x_pk, _bob_kyber_sk, bob_kyber_pk, _bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
     let body = sb(b"same body");
@@ -968,16 +939,14 @@ fn cross_kyberbox_nondeterministic_wire() {
     let wire2 = kyberbox::encrypt("ctx", &alice_x_sk, &bob_x_pk, &bob_kyber_pk, &body).unwrap();
 
     assert_ne!(
-        wire1.enc_data.expose_as_slice(),
-        wire2.enc_data.expose_as_slice(),
+        wire1.enc_data.as_slice(),
+        wire2.enc_data.as_slice(),
         "KyberBox must produce non-deterministic ciphertexts"
     );
 }
 
 #[test]
 fn kyberbox_cross_ctx_kem_ct_transplant_fails() {
-    // base_key mixes ss_kem with the ctx label, so a kem_ct from ctx-alpha yields a
-    // different base_key under ctx-beta and the body/headers AEAD must fail.
     let (alice_x_sk, alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
 

@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 use crate::error::Result;
-use crate::secrets::{FixedBytes, MasterKey32, Nonce12, SecretBytes, SessionId32};
+use crate::public::{PubByte32, PublicBytes};
+use crate::secrets::{MasterKey32, Nonce12, SecretBytes, SecretFixedBytes, SessionId32};
 use ed25519_dalek::SigningKey;
 use ml_dsa::{Generate, Keypair, MlDsa87, SigningKey as DsaSigningKey};
 use ml_kem::{
@@ -14,8 +15,8 @@ use rand::rngs::SysRng;
 use x25519_dalek::{PublicKey as XPublicKey, StaticSecret as XStaticSecret};
 
 #[inline]
-pub fn random_fixed<const N: usize>() -> Result<FixedBytes<N>> {
-    let mut out = FixedBytes::<N>::new_zeroed();
+pub fn random_fixed<const N: usize>() -> Result<SecretFixedBytes<N>> {
+    let mut out = SecretFixedBytes::<N>::new_zeroed();
     let mut rng = SysRng;
     rng.try_fill_bytes(out.as_mut_slice())?;
     Ok(out)
@@ -34,44 +35,38 @@ pub fn random_master_key32() -> Result<MasterKey32> {
 }
 
 #[inline]
-pub fn random_x25519_keypair() -> Result<(FixedBytes<32>, FixedBytes<32>)> {
+pub fn random_x25519_keypair() -> Result<(SecretFixedBytes<32>, PubByte32)> {
     let sk_seed = random_fixed::<32>()?;
     let secret = XStaticSecret::from(*sk_seed.as_array());
     let pk = XPublicKey::from(&secret);
-    Ok((sk_seed, FixedBytes::new(*pk.as_bytes())))
+    Ok((sk_seed, PubByte32::new(*pk.as_bytes())))
 }
 
 #[inline]
-pub fn random_ed25519_keypair() -> Result<(FixedBytes<32>, FixedBytes<32>)> {
+pub fn random_ed25519_keypair() -> Result<(SecretFixedBytes<32>, PubByte32)> {
     let seed = random_fixed::<32>()?;
     let signing = SigningKey::from_bytes(seed.as_array());
     let vk = signing.verifying_key().to_bytes();
-    Ok((seed, FixedBytes::new(vk)))
+    Ok((seed, PubByte32::new(vk)))
 }
 
 #[inline]
-pub fn random_kyber_mlkem1024_keypair() -> Result<(SecretBytes, SecretBytes)> {
+pub fn random_kyber_mlkem1024_keypair() -> Result<(SecretBytes, PublicBytes)> {
     let (sk, pk) = MlKem1024::generate_keypair();
 
-    let sk_bytes = sk.to_bytes();
-    let pk_bytes = pk.to_bytes();
-
     Ok((
-        SecretBytes::from_slice(sk_bytes.as_ref()),
-        SecretBytes::from_slice(pk_bytes.as_ref()),
+        SecretBytes::from_wiped(sk.to_bytes()),
+        PublicBytes::from_slice(pk.to_bytes().as_ref()),
     ))
 }
 
 #[inline]
-pub fn random_dilithium_mldsa87_keypair() -> Result<(SecretBytes, SecretBytes)> {
+pub fn random_dilithium_mldsa87_keypair() -> Result<(SecretBytes, PublicBytes)> {
     let sk = DsaSigningKey::<MlDsa87>::generate();
     let pk = sk.verifying_key();
 
-    let sk_bytes = sk.to_bytes();
-    let pk_bytes = pk.to_bytes();
-
     Ok((
-        SecretBytes::from_slice(sk_bytes.as_ref()),
-        SecretBytes::from_slice(pk_bytes.as_ref()),
+        SecretBytes::from_wiped(sk.to_bytes()),
+        PublicBytes::from_slice(pk.to_bytes().as_ref()),
     ))
 }

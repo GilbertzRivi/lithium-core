@@ -12,7 +12,7 @@
 //!
 //! - **At-rest key management** ([`keys`], [`secrets`]): [`keys::KeyManager`] owns the on-disk
 //!   keyfile, pluggable master-key providers, crash-safe hourly rotation and rewrap. Secret
-//!   types ([`secrets::Byte32`], [`secrets::SecretBytes`], [`secrets::MasterKey32`]) zeroize on
+//!   types ([`secrets::SecByte32`], [`secrets::SecretBytes`], [`secrets::MasterKey32`]) zeroize on
 //!   drop.
 //! - **Hybrid encryption** ([`crypto`]): [`crypto::kyberbox`] is the X25519 + ML-KEM-1024 AEAD
 //!   construction; [`crypto::sign`] dual-signs Ed25519 + ML-DSA-87; [`crypto::aead`],
@@ -36,6 +36,10 @@
 pub mod crypto;
 /// Shared error type returned across the crate.
 pub mod error;
+/// Helper: hex coder and decoder used by the library
+mod hexcodec;
+/// Hybrid HPKE-style seal/open, secret export and deterministic keypair derivation
+pub mod hpke;
 /// At-rest key management pillar: keyfile, master-key providers, rotation and rewrap.
 pub mod keys;
 /// Helper: OPAQUE PAKE and export-key DEK wrapping for password-authenticated key retrieval.
@@ -44,9 +48,11 @@ pub mod opaque;
 pub mod passwords;
 /// Helper: SHA-256 proof-of-work challenge/solve/verify.
 pub mod pow;
+/// Public key material: non-secret byte types parallel to secrets.
+pub mod public;
 /// At-rest key management pillar: zeroize-on-drop secret types.
 pub mod secrets;
 /// Helper: in-memory TTL store for ephemeral secrets.
 pub mod utils;
 
-pub use error::{CryptoErrorKind, LithiumError, Result};
+pub use error::{ErrorKind, LithiumError, Result};

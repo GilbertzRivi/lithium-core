@@ -3,8 +3,8 @@
 
 use crate::{
     error::{LithiumError, Result},
-    secrets::Byte32,
-    secrets::bytes::SecretBytes,
+    public::{PubByte32, PublicBytes},
+    secrets::SecByte32,
 };
 
 use ed25519_dalek::{
@@ -18,15 +18,15 @@ use ml_dsa::{
     signature::{SignatureEncoding, Signer as MlDsaSigner, Verifier as MlDsaVerifier},
 };
 
-pub fn sign_message<S: AsRef<[u8]>>(message: &[u8], priv_ed_seed: S) -> Result<SecretBytes> {
-    let seed = Byte32::from_slice(priv_ed_seed.as_ref())?;
+pub fn sign_message<S: AsRef<[u8]>>(message: &[u8], priv_ed_seed: S) -> Result<Vec<u8>> {
+    let seed = SecByte32::from_slice(priv_ed_seed.as_ref())?;
     let signing = Ed25519SigningKey::from_bytes(seed.as_array());
     let sig: Ed25519Signature = signing.sign(message);
 
-    Ok(SecretBytes::from_slice(&sig.to_bytes()))
+    Ok(sig.to_bytes().to_vec())
 }
 
-pub fn verify_signature(message: &[u8], signature: &[u8], pub_key: &Byte32) -> bool {
+pub fn verify_signature(message: &[u8], signature: &[u8], pub_key: &PubByte32) -> bool {
     if signature.len() != 64 {
         return false;
     }
@@ -44,23 +44,22 @@ pub fn verify_signature(message: &[u8], signature: &[u8], pub_key: &Byte32) -> b
     pk.verify_strict(message, &sig).is_ok()
 }
 
-pub fn sign_message_dili<S: AsRef<[u8]>>(message: &[u8], dili_sk_bytes: S) -> Result<SecretBytes> {
+pub fn sign_message_dili<S: AsRef<[u8]>>(message: &[u8], dili_sk_bytes: S) -> Result<Vec<u8>> {
     let sk = MlDsaSigningKey::<MlDsa87>::new_from_slice(dili_sk_bytes.as_ref())
-        .map_err(|_| LithiumError::internal())?;
+        .map_err(|_| LithiumError::key_import_failed("mldsa_signing_key"))?;
 
     let sig: MlDsaSignature<MlDsa87> = sk.sign(message);
     let sig_bytes = sig.to_bytes();
 
-    Ok(SecretBytes::from_slice(sig_bytes.as_slice()))
+    Ok(sig_bytes.as_slice().to_vec())
 }
 
 pub fn verify_signature_dili(
     message: &[u8],
     signature: &[u8],
-    dili_pk_bytes: &SecretBytes,
+    dili_pk_bytes: &PublicBytes,
 ) -> bool {
-    let Ok(pk) = MlDsaVerifyingKey::<MlDsa87>::new_from_slice(dili_pk_bytes.expose_as_slice())
-    else {
+    let Ok(pk) = MlDsaVerifyingKey::<MlDsa87>::new_from_slice(dili_pk_bytes.as_slice()) else {
         return false;
     };
 

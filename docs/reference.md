@@ -443,18 +443,24 @@ zeroized before `drop`. The task is aborted when the last
 pub type Result<T> = core::result::Result<T, LithiumError>;
 
 pub struct LithiumError {
-    pub kind: CryptoErrorKind,
+    pub kind: ErrorKind,
     pub source: Option<Box<dyn std::error::Error + Send + Sync>>,
 }
 ```
 
-In `debug_assertions` mode (`LithiumError::is_verbose()`) errors 
-print details. In release they print only the category, without 
-internal details that could leak through logs.
+The `Display` message is always honest about the error kind; only the
+`source` chain is gated behind `LithiumError::is_verbose()`
+(`debug_assertions`). This library is not the oracle boundary — a caller
+crossing a trust boundary (e.g. a network response an attacker can probe)
+must flatten distinguishable errors into coarse categories itself.
 
-Selected `CryptoErrorKind` variants:
-- `AeadFailed`: decryption or authenticity failure
+Selected `ErrorKind` variants:
+- `AeadFailed`: AEAD authenticity/decryption failure
 - `KdfFailed`: key derivation failure
+- `KemInvalidCiphertext`: malformed KEM ciphertext
+- `InvalidPublicKey { reason }`: unusable public key (e.g. low-order point)
+- `KeyImportFailed { reason }`: raw bytes could not be parsed into a key
+- `RandomFailed`: OS CSPRNG failure
 - `InvalidLength { expected, got }`: wrong buffer length
 - `InvalidHex` / `HexMustBeLowercase` / `HexDisallowedPrefix`: hex 
   parsing errors
@@ -462,7 +468,8 @@ Selected `CryptoErrorKind` variants:
 - `InvalidCredentials { msg }`: authentication failure
 - `InvalidPermissions { msg }`: a permissions violation
 - `Io`: an I/O error
-- `Internal`: an internal error (reveals no details in release)
+- `Internal { reason }`: a broken invariant; `reason` is a fixed
+  code-authored label, never attacker-derived data
 
 `From` is implemented for: `std::io::Error`, `hex::FromHexError`, 
 `serde_json::Error`, `hkdf::InvalidLength`, 

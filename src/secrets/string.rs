@@ -9,7 +9,7 @@ use serde::{Deserialize, Deserializer};
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::error::{LithiumError, Result};
-use crate::secrets::bytes::FixedBytes;
+use crate::secrets::bytes::SecretFixedBytes;
 
 #[derive(Clone)]
 pub struct SecretString(SecrecySecretString);
@@ -60,8 +60,8 @@ impl SecretString {
     }
 
     #[inline]
-    pub fn decode_hex_fixed<const N: usize>(&self) -> Result<FixedBytes<N>> {
-        FixedBytes::<N>::from_hex(self.expose())
+    pub fn decode_hex_fixed<const N: usize>(&self) -> Result<SecretFixedBytes<N>> {
+        SecretFixedBytes::<N>::from_hex(self.expose())
     }
 }
 

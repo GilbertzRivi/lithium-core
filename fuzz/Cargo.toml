@@ -65,3 +65,24 @@ path = "fuzz_targets/pow_verify.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "hpke_wire"
+path = "fuzz_targets/hpke_wire.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "hpke_open"
+path = "fuzz_targets/hpke_open.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "hpke_setup_receiver"
+path = "fuzz_targets/hpke_setup_receiver.rs"
+test = false
+doc = false
+bench = false

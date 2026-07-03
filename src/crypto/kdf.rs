@@ -7,7 +7,7 @@ use sha2::Sha256;
 
 use crate::{
     error::{LithiumError, Result},
-    secrets::Byte32,
+    secrets::SecByte32,
     secrets::bytes::SecretBytes,
 };
 
@@ -20,14 +20,44 @@ pub fn derive32(
     input: &SecretBytes,
     salt: Option<&SecretBytes>,
     info: &SecretBytes,
-) -> Result<Byte32> {
-    let hk = Hkdf::<Sha256>::new(salt.map(|s| s.expose_as_slice()), input.expose_as_slice());
-    let mut out = Byte32::new_zeroed();
-    hk.expand(info.expose_as_slice(), out.as_mut_slice())?;
-    Ok(out)
+) -> Result<SecByte32> {
+    let out = derive_bytes(input, salt, info, 32)?;
+    SecByte32::from_slice(out.expose_as_slice())
 }
 
-// Same params on both sides of a wrap, or it never decrypts.
+pub fn derive_bytes(
+    input: &SecretBytes,
+    salt: Option<&SecretBytes>,
+    info: &SecretBytes,
+    len: usize,
+) -> Result<SecretBytes> {
+    let hk = Hkdf::<Sha256>::new(salt.map(|s| s.expose_as_slice()), input.expose_as_slice());
+
+    let mut out = vec![0u8; len];
+    hk.expand(info.expose_as_slice(), &mut out)?;
+
+    Ok(SecretBytes::new(out))
+}
+
+pub fn hkdf_extract(salt: Option<&SecretBytes>, ikm: &SecretBytes) -> SecByte32 {
+    let (prk, _) =
+        Hkdf::<Sha256>::extract(salt.map(|s| s.expose_as_slice()), ikm.expose_as_slice());
+
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&prk);
+    SecByte32::new(out)
+}
+
+pub fn hkdf_expand(prk: &SecByte32, info: &SecretBytes, len: usize) -> Result<SecretBytes> {
+    let hk = Hkdf::<Sha256>::from_prk(prk.as_slice())
+        .map_err(|_| LithiumError::internal("hkdf_prk_len"))?;
+
+    let mut out = vec![0u8; len];
+    hk.expand(info.expose_as_slice(), &mut out)?;
+
+    Ok(SecretBytes::new(out))
+}
+
 pub fn argon2id() -> Result<Argon2<'static>> {
     let params = Params::new(
         ARGON2_M_COST,
@@ -35,6 +65,6 @@ pub fn argon2id() -> Result<Argon2<'static>> {
         ARGON2_P_COST,
         Some(ARGON2_OUT_LEN),
     )
-    .map_err(|_| LithiumError::internal())?;
+    .map_err(|_| LithiumError::internal("argon2_params"))?;
     Ok(Argon2::new(Algorithm::Argon2id, Version::V0x13, params))
 }

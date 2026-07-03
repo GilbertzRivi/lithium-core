@@ -8,12 +8,13 @@ use zeroize::{Zeroize, Zeroizing};
 
 use secrecy::{ExposeSecret, ExposeSecretMut, SecretBox};
 
-use crate::error::{CryptoErrorKind, LithiumError, Result};
+use crate::error::{LithiumError, Result};
+use crate::hexcodec;
 use crate::secrets::SecretString;
 
-pub struct FixedBytes<const N: usize>(SecretBox<[u8; N]>);
+pub struct SecretFixedBytes<const N: usize>(SecretBox<[u8; N]>);
 
-impl<const N: usize> FixedBytes<N> {
+impl<const N: usize> SecretFixedBytes<N> {
     pub const LEN: usize = N;
 
     #[inline]
@@ -48,28 +49,9 @@ impl<const N: usize> FixedBytes<N> {
 
     #[inline]
     pub fn from_hex(s: &str) -> Result<Self> {
-        if s.starts_with("0x") || s.starts_with("0X") {
-            return Err(LithiumError::hex_prefix_disallowed());
-        }
-        let expected = 2 * N;
-        if s.len() != expected {
-            return Err(LithiumError::new(CryptoErrorKind::InvalidHexLength {
-                expected,
-                got: s.len(),
-            }));
-        }
-        for &b in s.as_bytes() {
-            match b {
-                b'0'..=b'9' | b'a'..=b'f' => {}
-                b'A'..=b'F' => return Err(LithiumError::hex_must_be_lowercase()),
-                _ => return Err(LithiumError::new(CryptoErrorKind::InvalidHex)),
-            }
-        }
-
-        let mut out = SecretBox::new(Box::new([0u8; N]));
-        hex::decode_to_slice(s, out.expose_secret_mut().as_mut_slice())
-            .map_err(LithiumError::from)?;
-        Ok(Self(out))
+        let mut out = Self::new_zeroed();
+        hexcodec::decode_into(s, out.as_mut_slice())?;
+        Ok(out)
     }
 
     #[inline]
@@ -88,7 +70,7 @@ impl<const N: usize> FixedBytes<N> {
     }
 }
 
-impl<const N: usize> Clone for FixedBytes<N> {
+impl<const N: usize> Clone for SecretFixedBytes<N> {
     fn clone(&self) -> Self {
         let mut out = Self::new_zeroed();
         out.as_mut_slice().copy_from_slice(self.as_slice());
@@ -96,42 +78,46 @@ impl<const N: usize> Clone for FixedBytes<N> {
     }
 }
 
-impl<const N: usize> PartialEq for FixedBytes<N> {
+impl<const N: usize> PartialEq for SecretFixedBytes<N> {
     fn eq(&self, other: &Self) -> bool {
         self.as_slice().ct_eq(other.as_slice()).into()
     }
 }
-impl<const N: usize> Eq for FixedBytes<N> {}
-impl<const N: usize> fmt::Debug for FixedBytes<N> {
+
+impl<const N: usize> Eq for SecretFixedBytes<N> {}
+
+impl<const N: usize> fmt::Debug for SecretFixedBytes<N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "FixedBytes<{}>(..)", N)
     }
 }
-impl<const N: usize> AsRef<[u8]> for FixedBytes<N> {
+
+impl<const N: usize> AsRef<[u8]> for SecretFixedBytes<N> {
     fn as_ref(&self) -> &[u8] {
         self.as_slice()
     }
 }
-impl<const N: usize> TryFrom<&[u8]> for FixedBytes<N> {
+
+impl<const N: usize> TryFrom<&[u8]> for SecretFixedBytes<N> {
     type Error = LithiumError;
     fn try_from(value: &[u8]) -> Result<Self> {
         Self::from_slice(value)
     }
 }
-impl<const N: usize> From<[u8; N]> for FixedBytes<N> {
+
+impl<const N: usize> From<[u8; N]> for SecretFixedBytes<N> {
     fn from(value: [u8; N]) -> Self {
         Self::new(value)
     }
 }
 
-pub type Byte12 = FixedBytes<12>;
-pub type Byte32 = FixedBytes<32>;
-pub type Byte64 = FixedBytes<64>;
-pub type Byte2048 = FixedBytes<2048>;
+pub type SecByte12 = SecretFixedBytes<12>;
+pub type SecByte32 = SecretFixedBytes<32>;
+pub type SecByte64 = SecretFixedBytes<64>;
 
-pub type MasterKey32 = Byte32;
-pub type Nonce12 = Byte12;
-pub type SessionId32 = Byte32;
+pub type MasterKey32 = SecByte32;
+pub type Nonce12 = SecByte12;
+pub type SessionId32 = SecByte32;
 
 pub struct SecretBytes(SecretBox<Vec<u8>>);
 
@@ -143,6 +129,12 @@ impl SecretBytes {
     #[inline]
     pub fn from_slice(v: &[u8]) -> Self {
         Self::new(v.to_vec())
+    }
+    #[inline]
+    pub fn from_wiped<T: AsMut<[u8]>>(mut src: T) -> Self {
+        let out = Self::new(src.as_mut().to_vec());
+        src.as_mut().zeroize();
+        out
     }
     #[inline]
     pub fn expose_as_slice(&self) -> &[u8] {
@@ -171,26 +163,7 @@ impl SecretBytes {
 
     #[inline]
     pub fn from_hex(s: &str) -> Result<Self> {
-        if s.starts_with("0x") || s.starts_with("0X") {
-            return Err(LithiumError::hex_prefix_disallowed());
-        }
-        if !s.len().is_multiple_of(2) {
-            return Err(LithiumError::new(CryptoErrorKind::InvalidHexLength {
-                expected: s.len() + 1,
-                got: s.len(),
-            }));
-        }
-        for &b in s.as_bytes() {
-            match b {
-                b'0'..=b'9' | b'a'..=b'f' => {}
-                b'A'..=b'F' => return Err(LithiumError::hex_must_be_lowercase()),
-                _ => return Err(LithiumError::new(CryptoErrorKind::InvalidHex)),
-            }
-        }
-
-        let mut out = Self::new(vec![0u8; s.len() / 2]);
-        hex::decode_to_slice(s, out.expose_as_mut_vec()).map_err(LithiumError::from)?;
-        Ok(out)
+        Ok(Self::new(hexcodec::decode_vec(s)?))
     }
 }
 

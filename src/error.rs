@@ -7,13 +7,13 @@ pub type Result<T> = core::result::Result<T, LithiumError>;
 
 #[derive(Debug)]
 pub struct LithiumError {
-    pub kind: CryptoErrorKind,
+    pub kind: ErrorKind,
     pub source: Option<Box<dyn std::error::Error + Send + Sync>>,
 }
 
 impl LithiumError {
     #[inline]
-    pub fn new(kind: CryptoErrorKind) -> Self {
+    pub fn new(kind: ErrorKind) -> Self {
         Self { kind, source: None }
     }
 
@@ -33,12 +33,12 @@ impl LithiumError {
 
     #[inline]
     pub fn invalid_len(expected: usize, got: usize) -> Self {
-        Self::new(CryptoErrorKind::InvalidLength { expected, got })
+        Self::new(ErrorKind::InvalidLength { expected, got })
     }
 
     #[inline]
     pub fn invalid_hex_len(expected: usize, got: usize) -> Self {
-        Self::new(CryptoErrorKind::InvalidHexLength { expected, got })
+        Self::new(ErrorKind::InvalidHexLength { expected, got })
     }
 
     #[inline]
@@ -46,27 +46,27 @@ impl LithiumError {
     where
         E: std::error::Error + Send + Sync + 'static,
     {
-        Self::new(CryptoErrorKind::InvalidHex).with_source(err)
+        Self::new(ErrorKind::InvalidHex).with_source(err)
     }
 
     #[inline]
     pub fn hex_prefix_disallowed() -> Self {
-        Self::new(CryptoErrorKind::HexDisallowedPrefix)
+        Self::new(ErrorKind::HexDisallowedPrefix)
     }
 
     #[inline]
     pub fn hex_must_be_lowercase() -> Self {
-        Self::new(CryptoErrorKind::HexMustBeLowercase)
+        Self::new(ErrorKind::HexMustBeLowercase)
     }
 
     #[inline]
     pub fn string_policy() -> Self {
-        Self::new(CryptoErrorKind::StringPolicy)
+        Self::new(ErrorKind::StringPolicy)
     }
 
     #[inline]
     pub fn missing_header(name: &'static str) -> Self {
-        Self::new(CryptoErrorKind::MissingHeader { name })
+        Self::new(ErrorKind::MissingHeader { name })
     }
 
     #[inline]
@@ -74,7 +74,7 @@ impl LithiumError {
     where
         E: std::error::Error + Send + Sync + 'static,
     {
-        Self::new(CryptoErrorKind::InvalidUtf8Header { name }).with_source(err)
+        Self::new(ErrorKind::InvalidUtf8Header { name }).with_source(err)
     }
 
     #[inline]
@@ -82,32 +82,52 @@ impl LithiumError {
     where
         E: std::error::Error + Send + Sync + 'static,
     {
-        Self::new(CryptoErrorKind::JsonParse).with_source(err)
+        Self::new(ErrorKind::JsonParse).with_source(err)
     }
 
     #[inline]
     pub fn json_not_object() -> Self {
-        Self::new(CryptoErrorKind::JsonNotObject)
+        Self::new(ErrorKind::JsonNotObject)
     }
 
     #[inline]
     pub fn json_missing_field(key: &'static str) -> Self {
-        Self::new(CryptoErrorKind::JsonMissingField { key })
+        Self::new(ErrorKind::JsonMissingField { key })
     }
 
     #[inline]
     pub fn json_type_mismatch(key: &'static str, expected: &'static str) -> Self {
-        Self::new(CryptoErrorKind::JsonTypeMismatch { key, expected })
+        Self::new(ErrorKind::JsonTypeMismatch { key, expected })
     }
 
     #[inline]
     pub fn aead_failed() -> Self {
-        Self::new(CryptoErrorKind::AeadFailed)
+        Self::new(ErrorKind::AeadFailed)
     }
 
     #[inline]
     pub fn kdf_failed() -> Self {
-        Self::new(CryptoErrorKind::KdfFailed)
+        Self::new(ErrorKind::KdfFailed)
+    }
+
+    #[inline]
+    pub fn kem_invalid_ciphertext() -> Self {
+        Self::new(ErrorKind::KemInvalidCiphertext)
+    }
+
+    #[inline]
+    pub fn invalid_public_key(reason: &'static str) -> Self {
+        Self::new(ErrorKind::InvalidPublicKey { reason })
+    }
+
+    #[inline]
+    pub fn key_import_failed(reason: &'static str) -> Self {
+        Self::new(ErrorKind::KeyImportFailed { reason })
+    }
+
+    #[inline]
+    pub fn random_failed() -> Self {
+        Self::new(ErrorKind::RandomFailed)
     }
 
     #[inline]
@@ -115,47 +135,47 @@ impl LithiumError {
     where
         E: std::error::Error + Send + Sync + 'static,
     {
-        Self::new(CryptoErrorKind::Io).with_source(err)
+        Self::new(ErrorKind::Io).with_source(err)
     }
 
     #[inline]
-    pub fn internal() -> Self {
-        Self::new(CryptoErrorKind::Internal)
+    pub fn internal(reason: &'static str) -> Self {
+        Self::new(ErrorKind::Internal { reason })
     }
 
     #[inline]
     pub fn malformed_keyfile() -> Self {
-        Self::new(CryptoErrorKind::MalformedKeyfile)
+        Self::new(ErrorKind::MalformedKeyfile)
     }
 
     #[inline]
     pub fn invalid_credentials(msg: &'static str) -> Self {
-        Self::new(CryptoErrorKind::InvalidCredentials { msg })
+        Self::new(ErrorKind::InvalidCredentials { msg })
     }
 
     #[inline]
     pub fn invalid_perms(msg: &'static str) -> Self {
-        Self::new(CryptoErrorKind::InvalidPermissions { msg })
+        Self::new(ErrorKind::InvalidPermissions { msg })
     }
 
     #[inline]
     pub fn invalid_utf(msg: &'static str) -> Self {
-        Self::new(CryptoErrorKind::InvalidUtf { msg })
+        Self::new(ErrorKind::InvalidUtf { msg })
     }
 
     #[inline]
     pub fn env_missing(name: &'static str) -> Self {
-        Self::new(CryptoErrorKind::EnvMissing { name })
+        Self::new(ErrorKind::EnvMissing { name })
     }
 
     #[inline]
     pub fn env_invalid(name: &'static str) -> Self {
-        Self::new(CryptoErrorKind::EnvInvalid { name })
+        Self::new(ErrorKind::EnvInvalid { name })
     }
 
     #[inline]
     pub fn state_missing(name: &'static str) -> Self {
-        Self::new(CryptoErrorKind::StateMissing { name })
+        Self::new(ErrorKind::StateMissing { name })
     }
 
     #[inline]
@@ -163,7 +183,7 @@ impl LithiumError {
     where
         E: std::error::Error + Send + Sync + 'static,
     {
-        Self::new(CryptoErrorKind::Timeout).with_source(err)
+        Self::new(ErrorKind::Timeout).with_source(err)
     }
 
     #[inline]
@@ -171,17 +191,17 @@ impl LithiumError {
     where
         E: std::error::Error + Send + Sync + 'static,
     {
-        Self::new(CryptoErrorKind::Transport).with_source(err)
+        Self::new(ErrorKind::Transport).with_source(err)
     }
 
     #[inline]
     pub fn http_status(code: u16) -> Self {
-        Self::new(CryptoErrorKind::HttpStatus { code })
+        Self::new(ErrorKind::HttpStatus { code })
     }
 
     #[inline]
     pub fn is_not_found(&self) -> bool {
-        if self.kind != CryptoErrorKind::Io {
+        if self.kind != ErrorKind::Io {
             return false;
         }
         let Some(src) = self.source.as_deref() else {
@@ -195,7 +215,7 @@ impl LithiumError {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CryptoErrorKind {
+pub enum ErrorKind {
     InvalidLength {
         expected: usize,
         got: usize,
@@ -208,6 +228,9 @@ pub enum CryptoErrorKind {
     HexDisallowedPrefix,
     HexMustBeLowercase,
     StringPolicy,
+    InvalidUtf {
+        msg: &'static str,
+    },
     MissingHeader {
         name: &'static str,
     },
@@ -223,15 +246,23 @@ pub enum CryptoErrorKind {
         key: &'static str,
         expected: &'static str,
     },
+    AeadFailed,
+    KdfFailed,
+    KemInvalidCiphertext,
+    InvalidPublicKey {
+        reason: &'static str,
+    },
+    KeyImportFailed {
+        reason: &'static str,
+    },
+    RandomFailed,
     InvalidCredentials {
         msg: &'static str,
     },
     InvalidPermissions {
         msg: &'static str,
     },
-    InvalidUtf {
-        msg: &'static str,
-    },
+    MalformedKeyfile,
     EnvMissing {
         name: &'static str,
     },
@@ -241,91 +272,67 @@ pub enum CryptoErrorKind {
     StateMissing {
         name: &'static str,
     },
+    Io,
+    Timeout,
+    Transport,
     HttpStatus {
         code: u16,
     },
-    Timeout,
-    Transport,
-    KdfFailed,
-    AeadFailed,
-    Io,
-    Internal,
-    MalformedKeyfile,
+    Internal {
+        reason: &'static str,
+    },
 }
 
-impl fmt::Display for CryptoErrorKind {
+impl fmt::Display for ErrorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            CryptoErrorKind::InvalidLength { .. } => write!(f, "invalid length"),
-            CryptoErrorKind::InvalidHexLength { .. } => write!(f, "invalid hex length"),
-            CryptoErrorKind::InvalidHex => write!(f, "invalid hex"),
-            CryptoErrorKind::HexDisallowedPrefix => write!(f, "hex prefix disallowed"),
-            CryptoErrorKind::HexMustBeLowercase => write!(f, "hex must be lowercase"),
-            CryptoErrorKind::StringPolicy => write!(f, "invalid input"),
-            CryptoErrorKind::MissingHeader { .. } => write!(f, "missing header"),
-            CryptoErrorKind::InvalidUtf8Header { .. } => write!(f, "invalid header encoding"),
-            CryptoErrorKind::JsonParse => write!(f, "invalid json"),
-            CryptoErrorKind::JsonNotObject => write!(f, "invalid json"),
-            CryptoErrorKind::JsonMissingField { .. } => write!(f, "invalid json"),
-            CryptoErrorKind::JsonTypeMismatch { .. } => write!(f, "invalid json"),
-            CryptoErrorKind::InvalidCredentials { .. } => write!(f, "invalid credentials"),
-            CryptoErrorKind::InvalidPermissions { .. } => write!(f, "permission denied"),
-            CryptoErrorKind::InvalidUtf { .. } => write!(f, "invalid utf-8"),
-            CryptoErrorKind::EnvMissing { .. } => write!(f, "missing environment variable"),
-            CryptoErrorKind::EnvInvalid { .. } => write!(f, "invalid environment variable"),
-            CryptoErrorKind::StateMissing { .. } => write!(f, "missing state"),
-            CryptoErrorKind::HttpStatus { .. } => write!(f, "http status error"),
-            CryptoErrorKind::Timeout => write!(f, "timeout"),
-            CryptoErrorKind::Transport => write!(f, "transport error"),
-            CryptoErrorKind::KdfFailed => write!(f, "cryptographic operation failed"),
-            CryptoErrorKind::AeadFailed => write!(f, "cryptographic operation failed"),
-            CryptoErrorKind::Io => write!(f, "i/o error"),
-            CryptoErrorKind::Internal => write!(f, "internal error"),
-            CryptoErrorKind::MalformedKeyfile => write!(f, "malformed keyfile"),
+            ErrorKind::InvalidLength { expected, got } => {
+                write!(f, "invalid length: expected {expected}, got {got}")
+            }
+            ErrorKind::InvalidHexLength { expected, got } => {
+                write!(f, "invalid hex length: expected {expected}, got {got}")
+            }
+            ErrorKind::InvalidHex => write!(f, "invalid hex"),
+            ErrorKind::HexDisallowedPrefix => write!(f, "hex prefix disallowed"),
+            ErrorKind::HexMustBeLowercase => write!(f, "hex must be lowercase"),
+            ErrorKind::StringPolicy => write!(f, "input rejected by policy"),
+            ErrorKind::InvalidUtf { msg } => write!(f, "invalid utf-8: {msg}"),
+            ErrorKind::MissingHeader { name } => write!(f, "missing header: {name}"),
+            ErrorKind::InvalidUtf8Header { name } => write!(f, "invalid utf-8 in header: {name}"),
+            ErrorKind::JsonParse => write!(f, "invalid json"),
+            ErrorKind::JsonNotObject => write!(f, "json is not an object"),
+            ErrorKind::JsonMissingField { key } => write!(f, "json missing field: {key}"),
+            ErrorKind::JsonTypeMismatch { key, expected } => {
+                write!(f, "json type mismatch at {key}: expected {expected}")
+            }
+            ErrorKind::AeadFailed => write!(f, "aead operation failed"),
+            ErrorKind::KdfFailed => write!(f, "key derivation failed"),
+            ErrorKind::KemInvalidCiphertext => write!(f, "invalid kem ciphertext"),
+            ErrorKind::InvalidPublicKey { reason } => write!(f, "invalid public key: {reason}"),
+            ErrorKind::KeyImportFailed { reason } => write!(f, "key import failed: {reason}"),
+            ErrorKind::RandomFailed => write!(f, "random number generation failed"),
+            ErrorKind::InvalidCredentials { msg } => write!(f, "invalid credentials: {msg}"),
+            ErrorKind::InvalidPermissions { msg } => write!(f, "permission denied: {msg}"),
+            ErrorKind::MalformedKeyfile => write!(f, "malformed keyfile"),
+            ErrorKind::EnvMissing { name } => write!(f, "missing environment variable: {name}"),
+            ErrorKind::EnvInvalid { name } => write!(f, "invalid environment variable: {name}"),
+            ErrorKind::StateMissing { name } => write!(f, "missing state: {name}"),
+            ErrorKind::Io => write!(f, "i/o error"),
+            ErrorKind::Timeout => write!(f, "timeout"),
+            ErrorKind::Transport => write!(f, "transport error"),
+            ErrorKind::HttpStatus { code } => write!(f, "http status {code}"),
+            ErrorKind::Internal { reason } => write!(f, "internal error: {reason}"),
         }
     }
 }
 
 impl fmt::Display for LithiumError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if Self::is_verbose() {
-            match self.kind {
-                CryptoErrorKind::InvalidLength { expected, got } => {
-                    write!(f, "invalid length: expected {expected}, got {got}")?
-                }
-                CryptoErrorKind::InvalidHexLength { expected, got } => {
-                    write!(f, "invalid hex length: expected {expected}, got {got}")?
-                }
-                CryptoErrorKind::MissingHeader { name } => write!(f, "missing header: {name}")?,
-                CryptoErrorKind::InvalidUtf8Header { name } => {
-                    write!(f, "invalid utf-8 in header: {name}")?
-                }
-                CryptoErrorKind::JsonMissingField { key } => {
-                    write!(f, "json missing field: {key}")?
-                }
-                CryptoErrorKind::JsonTypeMismatch { key, expected } => {
-                    write!(f, "json type mismatch at {key}: expected {expected}")?
-                }
-                CryptoErrorKind::InvalidCredentials { msg } => {
-                    write!(f, "invalid credentials: {msg}")?
-                }
-                CryptoErrorKind::InvalidPermissions { msg } => {
-                    write!(f, "invalid permissions: {msg}")?
-                }
-                CryptoErrorKind::InvalidUtf { msg } => write!(f, "invalid utf-8: {msg}")?,
-                CryptoErrorKind::EnvMissing { name } => write!(f, "missing env var: {name}")?,
-                CryptoErrorKind::EnvInvalid { name } => write!(f, "invalid env var: {name}")?,
-                CryptoErrorKind::StateMissing { name } => write!(f, "missing state: {name}")?,
-                CryptoErrorKind::HttpStatus { code } => write!(f, "http status error: {code}")?,
-                _ => write!(f, "{}", self.kind)?,
-            }
-            if let Some(src) = &self.source {
-                write!(f, " | source: {src}")?;
-            }
-            Ok(())
-        } else {
-            write!(f, "{}", self.kind)
+        write!(f, "{}", self.kind)?;
+        if let (true, Some(src)) = (Self::is_verbose(), &self.source) {
+            write!(f, " | source: {src}")?;
         }
+        Ok(())
     }
 }
 
@@ -362,6 +369,6 @@ impl From<aes_gcm_siv::aead::Error> for LithiumError {
 }
 impl From<rand::rngs::SysError> for LithiumError {
     fn from(err: rand::rngs::SysError) -> Self {
-        LithiumError::internal().with_source(err)
+        LithiumError::random_failed().with_source(err)
     }
 }

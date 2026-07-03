@@ -15,7 +15,7 @@ async fn store_set_and_peek() {
     let store = EphemeralStoreManager::new().unwrap();
     let ttl = Duration::from_secs(60);
 
-    store.set("key1", &sb(b"value1"), ttl).await.unwrap();
+    store.set("key1", sb(b"value1"), ttl).await.unwrap();
     let found = store.peek("key1").await.unwrap();
 
     assert!(found.is_some());
@@ -34,7 +34,7 @@ async fn store_take_removes_value() {
     let store = EphemeralStoreManager::new().unwrap();
     let ttl = Duration::from_secs(60);
 
-    store.set("takekey", &sb(b"takeval"), ttl).await.unwrap();
+    store.set("takekey", sb(b"takeval"), ttl).await.unwrap();
     let first = store.take("takekey").await.unwrap();
     let second = store.take("takekey").await.unwrap();
 
@@ -50,7 +50,7 @@ async fn store_take_removes_value() {
 async fn store_del_removes_value() {
     let store = EphemeralStoreManager::new().unwrap();
     store
-        .set("delkey", &sb(b"delval"), Duration::from_secs(60))
+        .set("delkey", sb(b"delval"), Duration::from_secs(60))
         .await
         .unwrap();
 
@@ -70,8 +70,8 @@ async fn store_set_overwrites_existing() {
     let store = EphemeralStoreManager::new().unwrap();
     let ttl = Duration::from_secs(60);
 
-    store.set("k", &sb(b"old"), ttl).await.unwrap();
-    store.set("k", &sb(b"new"), ttl).await.unwrap();
+    store.set("k", sb(b"old"), ttl).await.unwrap();
+    store.set("k", sb(b"new"), ttl).await.unwrap();
 
     let result = store.peek("k").await.unwrap().unwrap();
     assert_eq!(result.expose_as_slice(), b"new");
@@ -81,7 +81,7 @@ async fn store_set_overwrites_existing() {
 async fn store_set_if_absent_inserts_when_absent() {
     let store = EphemeralStoreManager::new().unwrap();
     let inserted = store
-        .set_if_absent("fresh", &sb(b"val"), Duration::from_secs(60))
+        .set_if_absent("fresh", sb(b"val"), Duration::from_secs(60))
         .await
         .unwrap();
 
@@ -95,9 +95,9 @@ async fn store_set_if_absent_does_not_overwrite() {
     let store = EphemeralStoreManager::new().unwrap();
     let ttl = Duration::from_secs(60);
 
-    store.set("dup", &sb(b"first"), ttl).await.unwrap();
+    store.set("dup", sb(b"first"), ttl).await.unwrap();
     let inserted = store
-        .set_if_absent("dup", &sb(b"second"), ttl)
+        .set_if_absent("dup", sb(b"second"), ttl)
         .await
         .unwrap();
 
@@ -115,7 +115,7 @@ async fn store_peek_does_not_remove() {
     let store = EphemeralStoreManager::new().unwrap();
     let ttl = Duration::from_secs(60);
 
-    store.set("peekonly", &sb(b"data"), ttl).await.unwrap();
+    store.set("peekonly", sb(b"data"), ttl).await.unwrap();
 
     let first = store.peek("peekonly").await.unwrap();
     let second = store.peek("peekonly").await.unwrap();
@@ -127,13 +127,11 @@ async fn store_peek_does_not_remove() {
 #[tokio::test]
 async fn store_expired_entry_not_returned_by_take() {
     let store = EphemeralStoreManager::new().unwrap();
-    // TTL of 1 ms - will expire immediately
     store
-        .set("exp", &sb(b"gone"), Duration::from_millis(1))
+        .set("exp", sb(b"gone"), Duration::from_millis(1))
         .await
         .unwrap();
 
-    // Wait long enough for the entry to expire
     tokio::time::sleep(Duration::from_millis(20)).await;
 
     let result = store.take("exp").await.unwrap();
@@ -144,7 +142,7 @@ async fn store_expired_entry_not_returned_by_take() {
 async fn store_expired_entry_not_returned_by_peek() {
     let store = EphemeralStoreManager::new().unwrap();
     store
-        .set("exppeek", &sb(b"gone"), Duration::from_millis(1))
+        .set("exppeek", sb(b"gone"), Duration::from_millis(1))
         .await
         .unwrap();
 
@@ -160,11 +158,7 @@ async fn store_expired_entry_not_returned_by_peek() {
 #[tokio::test]
 async fn store_zero_ttl_not_stored() {
     let store = EphemeralStoreManager::new().unwrap();
-    // TTL of zero: set() is a no-op per implementation
-    store
-        .set("zero", &sb(b"val"), Duration::ZERO)
-        .await
-        .unwrap();
+    store.set("zero", sb(b"val"), Duration::ZERO).await.unwrap();
 
     let result = store.peek("zero").await.unwrap();
     assert!(result.is_none(), "zero-TTL entry should not be present");
@@ -175,9 +169,9 @@ async fn store_multiple_independent_keys() {
     let store = EphemeralStoreManager::new().unwrap();
     let ttl = Duration::from_secs(60);
 
-    store.set("a", &sb(b"alpha"), ttl).await.unwrap();
-    store.set("b", &sb(b"beta"), ttl).await.unwrap();
-    store.set("c", &sb(b"gamma"), ttl).await.unwrap();
+    store.set("a", sb(b"alpha"), ttl).await.unwrap();
+    store.set("b", sb(b"beta"), ttl).await.unwrap();
+    store.set("c", sb(b"gamma"), ttl).await.unwrap();
 
     assert_eq!(
         store.peek("a").await.unwrap().unwrap().expose_as_slice(),
@@ -198,13 +192,13 @@ async fn store_set_if_absent_allows_reinsertion_after_expiry() {
     let store = EphemeralStoreManager::new().unwrap();
     let ttl = Duration::from_millis(5);
 
-    let first = store.set_if_absent("key", &sb(b"v1"), ttl).await.unwrap();
+    let first = store.set_if_absent("key", sb(b"v1"), ttl).await.unwrap();
     assert!(first);
 
     tokio::time::sleep(Duration::from_millis(30)).await;
 
     let second = store
-        .set_if_absent("key", &sb(b"v2"), Duration::from_secs(60))
+        .set_if_absent("key", sb(b"v2"), Duration::from_secs(60))
         .await
         .unwrap();
     assert!(second, "should succeed after original TTL expired");

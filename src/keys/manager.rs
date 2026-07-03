@@ -10,7 +10,8 @@ use x25519_dalek::{PublicKey as XPublicKey, StaticSecret as XStaticSecret};
 
 use crate::crypto::{aead, keys};
 use crate::error::{LithiumError, Result};
-use crate::secrets::{Byte32, MasterKey32, SecretBytes};
+use crate::public::{PubByte32, PublicBytes};
+use crate::secrets::{MasterKey32, SecByte32, SecretBytes};
 
 use super::keyfile;
 
@@ -60,10 +61,15 @@ impl KeyStoreKind {
 }
 
 pub trait MkProvider {
-    fn load_mk(&self) -> Result<Byte32>;
-    fn store_mk(&self, mk: &Byte32) -> Result<()>;
+    fn load_mk(&self) -> Result<SecByte32>;
+    fn store_mk(&self, mk: &SecByte32) -> Result<()>;
 
-    fn derive_secret32(&self, mk: &Byte32, label: &[u8], secrets_dir: &Path) -> Result<Byte32> {
+    fn derive_secret32(
+        &self,
+        mk: &SecByte32,
+        label: &[u8],
+        secrets_dir: &Path,
+    ) -> Result<SecByte32> {
         load_or_create_label_secret32(secrets_dir, mk, label)
     }
 }
@@ -79,22 +85,22 @@ impl PlainFileMkProvider {
 }
 
 impl MkProvider for PlainFileMkProvider {
-    fn load_mk(&self) -> Result<Byte32> {
+    fn load_mk(&self) -> Result<SecByte32> {
         let bytes = keyfile::read_keyfile_bytes(&self.path)?;
-        Byte32::from_slice(bytes.expose_as_slice())
+        SecByte32::from_slice(bytes.expose_as_slice())
     }
 
-    fn store_mk(&self, mk: &Byte32) -> Result<()> {
+    fn store_mk(&self, mk: &SecByte32) -> Result<()> {
         keyfile::write_secure(&self.path, mk.as_slice())
     }
 }
 
 #[derive(Clone)]
 pub struct PublicKeys {
-    pub ed25519: Byte32,
-    pub x25519: Byte32,
-    pub kyber: SecretBytes,
-    pub dilithium: SecretBytes,
+    pub ed25519: PubByte32,
+    pub x25519: PubByte32,
+    pub kyber: PublicBytes,
+    pub dilithium: PublicBytes,
 }
 
 pub struct KeyManager<P: MkProvider> {
@@ -105,7 +111,7 @@ pub struct KeyManager<P: MkProvider> {
     rotate_dir: PathBuf,
     mk_provider: P,
     public_keys: PublicKeys,
-    jwt_secret: Byte32,
+    jwt_secret: SecByte32,
     rotate_every: Duration,
     next_rotation_at: Instant,
 }
@@ -141,22 +147,24 @@ fn write_marker(path: &Path, data: &[u8]) -> Result<()> {
 }
 
 #[inline]
-fn read_pub32(path: &Path) -> Result<Byte32> {
+fn read_pub32(path: &Path) -> Result<PubByte32> {
     let bytes = keyfile::read_keyfile_bytes(path)?;
-    Byte32::from_slice(bytes.expose_as_slice())
+    PubByte32::from_slice(bytes.expose_as_slice())
 }
 
 #[inline]
-fn read_pub_bytes(path: &Path) -> Result<SecretBytes> {
-    keyfile::read_keyfile_bytes(path)
+fn read_pub_bytes(path: &Path) -> Result<PublicBytes> {
+    Ok(PublicBytes::from_slice(
+        keyfile::read_keyfile_bytes(path)?.expose_as_slice(),
+    ))
 }
 
 fn sync_public_cache(pub_dir: &Path, pks: &PublicKeys) -> Result<()> {
     fs::create_dir_all(pub_dir).map_err(LithiumError::io)?;
     keyfile::write_secure(&pub_dir.join(ED_PUB), pks.ed25519.as_slice())?;
     keyfile::write_secure(&pub_dir.join(X_PUB), pks.x25519.as_slice())?;
-    keyfile::write_secure(&pub_dir.join(KYBER_PUB), pks.kyber.expose_as_slice())?;
-    keyfile::write_secure(&pub_dir.join(DILI_PUB), pks.dilithium.expose_as_slice())?;
+    keyfile::write_secure(&pub_dir.join(KYBER_PUB), pks.kyber.as_slice())?;
+    keyfile::write_secure(&pub_dir.join(DILI_PUB), pks.dilithium.as_slice())?;
     sync_dir(pub_dir)?;
     Ok(())
 }
@@ -174,8 +182,8 @@ fn ensure_secret32_keyfile(
     path: &Path,
     mk: &MasterKey32,
     key_type: &str,
-    generator: impl FnOnce() -> Result<Byte32>,
-) -> Result<Byte32> {
+    generator: impl FnOnce() -> Result<SecByte32>,
+) -> Result<SecByte32> {
     if path.exists() {
         return keyfile::load_secret32_decrypted(path, mk, key_type);
     }
@@ -205,7 +213,7 @@ fn load_or_create_label_secret32(
     secrets_dir: &Path,
     mk: &MasterKey32,
     label: &[u8],
-) -> Result<Byte32> {
+) -> Result<SecByte32> {
     let path = label_secret_path(secrets_dir, label);
     let key_type = label_key_type(label);
 
@@ -236,15 +244,15 @@ fn load_or_create_label_bytes(
     Ok(v)
 }
 
-fn derive_ed25519_pub(seed: &Byte32) -> Byte32 {
+fn derive_ed25519_pub(seed: &SecByte32) -> PubByte32 {
     let sk = SigningKey::from_bytes(seed.as_array());
-    Byte32::new(sk.verifying_key().to_bytes())
+    PubByte32::new(sk.verifying_key().to_bytes())
 }
 
-fn derive_x25519_pub(seed: &Byte32) -> Byte32 {
+fn derive_x25519_pub(seed: &SecByte32) -> PubByte32 {
     let sk = XStaticSecret::from(*seed.as_array());
     let pk = XPublicKey::from(&sk);
-    Byte32::new(pk.to_bytes())
+    PubByte32::new(pk.to_bytes())
 }
 
 fn ensure_asymmetric_material(
@@ -284,7 +292,7 @@ fn ensure_asymmetric_material(
             let (sk_bytes, pk_bytes) = keys::random_kyber_mlkem1024_keypair()?;
 
             keyfile::save_bytes_encrypted(&priv_path, mk, sk_bytes.expose_as_slice(), KT_KYBER_SK)?;
-            keyfile::write_secure(&pub_path, pk_bytes.expose_as_slice())?;
+            keyfile::write_secure(&pub_path, pk_bytes.as_slice())?;
 
             pk_bytes
         }
@@ -305,7 +313,7 @@ fn ensure_asymmetric_material(
             let (sk_bytes, pk_bytes) = keys::random_dilithium_mldsa87_keypair()?;
 
             keyfile::save_bytes_encrypted(&priv_path, mk, sk_bytes.expose_as_slice(), KT_DILI_SK)?;
-            keyfile::write_secure(&pub_path, pk_bytes.expose_as_slice())?;
+            keyfile::write_secure(&pub_path, pk_bytes.as_slice())?;
 
             pk_bytes
         }
@@ -361,7 +369,7 @@ fn collect_rewrap_targets(
         if path.exists() {
             let relative_path = path
                 .strip_prefix(root_dir)
-                .map_err(|_| LithiumError::internal())?
+                .map_err(|_| LithiumError::internal("path_not_under_root"))?
                 .to_path_buf();
             out.push(RewrapTarget {
                 live_path: path,
@@ -375,12 +383,12 @@ fn collect_rewrap_targets(
         let stem = path
             .file_stem()
             .and_then(|s| s.to_str())
-            .ok_or_else(LithiumError::internal)?
+            .ok_or_else(|| LithiumError::internal("keyfile_stem_utf8"))?
             .to_owned();
 
         let relative_path = path
             .strip_prefix(root_dir)
-            .map_err(|_| LithiumError::internal())?
+            .map_err(|_| LithiumError::internal("path_not_under_root"))?
             .to_path_buf();
 
         out.push(RewrapTarget {
@@ -568,7 +576,7 @@ impl<P: MkProvider> KeyManager<P> {
         &self.public_keys
     }
 
-    pub fn jwt_secret(&self) -> &Byte32 {
+    pub fn jwt_secret(&self) -> &SecByte32 {
         &self.jwt_secret
     }
 
@@ -582,7 +590,7 @@ impl<P: MkProvider> KeyManager<P> {
         Ok(())
     }
 
-    pub fn derive_secret32(&self, label: &[u8]) -> Result<Byte32> {
+    pub fn derive_secret32(&self, label: &[u8]) -> Result<SecByte32> {
         let root_mk = self.mk_provider.load_mk()?;
         self.mk_provider
             .derive_secret32(&root_mk, label, &self.secrets_dir)
@@ -592,8 +600,8 @@ impl<P: MkProvider> KeyManager<P> {
         &self,
         label: &[u8],
         plaintext: &SecretBytes,
-        aad: &SecretBytes,
-    ) -> Result<SecretBytes> {
+        aad: &[u8],
+    ) -> Result<PublicBytes> {
         let dek = self.derive_secret32(label)?;
         let nonce = keys::random_12()?;
         aead::encrypt(plaintext, &dek, &nonce, aad)
@@ -602,8 +610,8 @@ impl<P: MkProvider> KeyManager<P> {
     pub fn decrypt_with_derived(
         &self,
         label: &[u8],
-        blob: &SecretBytes,
-        aad: &SecretBytes,
+        blob: &PublicBytes,
+        aad: &[u8],
     ) -> Result<SecretBytes> {
         let dek = self.derive_secret32(label)?;
         aead::decrypt(blob, &dek, aad)
@@ -624,7 +632,7 @@ impl<P: MkProvider> KeyManager<P> {
 
     pub fn with_signing_keys<R>(
         &self,
-        f: impl FnOnce(Byte32, SecretBytes) -> Result<R>,
+        f: impl FnOnce(SecByte32, SecretBytes) -> Result<R>,
     ) -> Result<R> {
         let mk = self.mk_provider.load_mk()?;
         let ed_seed =
@@ -636,7 +644,7 @@ impl<P: MkProvider> KeyManager<P> {
 
     pub fn with_x25519_and_kyber_sk<R>(
         &self,
-        f: impl FnOnce(Byte32, SecretBytes) -> Result<R>,
+        f: impl FnOnce(SecByte32, SecretBytes) -> Result<R>,
     ) -> Result<R> {
         let mk = self.mk_provider.load_mk()?;
         let x_seed = keyfile::load_secret32_decrypted(&self.priv_dir.join(X_PRIV), &mk, KT_X_SEED)?;

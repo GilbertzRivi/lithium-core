@@ -8,18 +8,19 @@ use aes_gcm_siv::{
 
 use crate::{
     error::{LithiumError, Result},
+    public::PublicBytes,
     secrets::bytes::SecretBytes,
-    secrets::{Byte12, Byte32},
+    secrets::{SecByte12, SecByte32},
 };
 
 const AEAD_BLOB_VERSION: u8 = 1;
 
 pub fn encrypt_raw(
     plaintext: &SecretBytes,
-    key: &Byte32,
-    nonce: &Byte12,
-    aad: &SecretBytes,
-) -> Result<SecretBytes> {
+    key: &SecByte32,
+    nonce: &SecByte12,
+    aad: &[u8],
+) -> Result<PublicBytes> {
     let key: &Key<Aes256GcmSiv> = key.as_slice().into();
 
     let nonce: &Nonce = nonce.as_slice().into();
@@ -29,18 +30,18 @@ pub fn encrypt_raw(
         nonce,
         Payload {
             msg: plaintext.expose_as_slice(),
-            aad: aad.expose_as_slice(),
+            aad,
         },
     )?;
 
-    Ok(SecretBytes::new(ct))
+    Ok(PublicBytes::new(ct))
 }
 
 pub fn decrypt_raw(
-    ciphertext: &SecretBytes,
-    key: &Byte32,
-    nonce: &Byte12,
-    aad: &SecretBytes,
+    ciphertext: &PublicBytes,
+    key: &SecByte32,
+    nonce: &SecByte12,
+    aad: &[u8],
 ) -> Result<SecretBytes> {
     let key: &Key<Aes256GcmSiv> = key.as_slice().into();
 
@@ -50,8 +51,8 @@ pub fn decrypt_raw(
     let pt = cipher.decrypt(
         nonce,
         Payload {
-            msg: ciphertext.expose_as_slice(),
-            aad: aad.expose_as_slice(),
+            msg: ciphertext.as_slice(),
+            aad,
         },
     )?;
 
@@ -60,26 +61,26 @@ pub fn decrypt_raw(
 
 pub fn encrypt(
     plaintext: &SecretBytes,
-    key: &Byte32,
-    nonce: &Byte12,
-    aad: &SecretBytes,
-) -> Result<SecretBytes> {
+    key: &SecByte32,
+    nonce: &SecByte12,
+    aad: &[u8],
+) -> Result<PublicBytes> {
     let ct = encrypt_raw(plaintext, key, nonce, aad)?;
     let mut out = Vec::with_capacity(1 + 12 + ct.len());
     out.push(AEAD_BLOB_VERSION);
     out.extend_from_slice(nonce.as_slice());
-    out.extend_from_slice(ct.expose_as_slice());
-    Ok(SecretBytes::new(out))
+    out.extend_from_slice(ct.as_slice());
+    Ok(PublicBytes::new(out))
 }
 
-pub fn decrypt(blob: &SecretBytes, key: &Byte32, aad: &SecretBytes) -> Result<SecretBytes> {
-    if blob.len() < 1 + 12 + 16 {
+pub fn decrypt(blob: &PublicBytes, key: &SecByte32, aad: &[u8]) -> Result<SecretBytes> {
+    let bytes = blob.as_slice();
+    if bytes.len() < 1 + 12 + 16 {
         return Err(LithiumError::aead_failed());
     }
-    if blob.expose_as_slice()[0] != AEAD_BLOB_VERSION {
+    if bytes[0] != AEAD_BLOB_VERSION {
         return Err(LithiumError::aead_failed());
     }
-    let nonce = Byte12::from_slice(&blob.expose_as_slice()[1..13])?;
-    let ct = SecretBytes::from_slice(&blob.expose_as_slice()[13..]);
-    decrypt_raw(&ct, key, &nonce, aad)
+    let nonce = SecByte12::from_slice(&bytes[1..13])?;
+    decrypt_raw(&PublicBytes::from_slice(&bytes[13..]), key, &nonce, aad)
 }

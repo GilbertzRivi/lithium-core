@@ -7,7 +7,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tokio::sync::Mutex;
-use zeroize::Zeroize;
 
 use crate::error::{LithiumError, Result};
 use crate::secrets::bytes::SecretBytes;
@@ -103,8 +102,8 @@ impl EphemeralStoreManager {
                 Some(cur) => cur.version == top.version && cur.expires_at <= now,
                 None => false,
             };
-            if should_remove && let Some(mut removed) = guard.map.remove(&top.key) {
-                removed.ciphertext.expose_as_mut_vec().zeroize();
+            if should_remove {
+                guard.map.remove(&top.key);
             }
         }
         Ok(())
@@ -116,7 +115,7 @@ impl EphemeralStoreManager {
         v
     }
 
-    pub async fn set(&self, key: &str, value: &SecretBytes, ttl: Duration) -> Result<()> {
+    pub async fn set(&self, key: &str, value: SecretBytes, ttl: Duration) -> Result<()> {
         if ttl.is_zero() {
             return Ok(());
         }
@@ -124,7 +123,7 @@ impl EphemeralStoreManager {
         let mut guard = self.inner.lock().await;
         let ver = Self::next_version(&mut guard);
         let entry = StoreEntry {
-            ciphertext: value.clone(),
+            ciphertext: value,
             expires_at,
             version: ver,
         };
@@ -140,7 +139,7 @@ impl EphemeralStoreManager {
     pub async fn set_if_absent(
         &self,
         key: &str,
-        value: &SecretBytes,
+        value: SecretBytes,
         ttl: Duration,
     ) -> Result<bool> {
         if ttl.is_zero() {
@@ -158,7 +157,7 @@ impl EphemeralStoreManager {
         guard.map.insert(
             key.to_owned(),
             StoreEntry {
-                ciphertext: value.clone(),
+                ciphertext: value,
                 expires_at,
                 version: ver,
             },
@@ -187,11 +186,10 @@ impl EphemeralStoreManager {
     pub async fn take(&self, key: &str) -> Result<Option<SecretBytes>> {
         let now = Instant::now();
         let mut guard = self.inner.lock().await;
-        let Some(mut entry) = guard.map.remove(key) else {
+        let Some(entry) = guard.map.remove(key) else {
             return Ok(None);
         };
         if entry.expires_at <= now {
-            entry.ciphertext.expose_as_mut_vec().zeroize();
             return Ok(None);
         }
         Ok(Some(entry.ciphertext))
@@ -199,9 +197,7 @@ impl EphemeralStoreManager {
 
     pub async fn del(&self, key: &str) -> Result<()> {
         let mut guard = self.inner.lock().await;
-        if let Some(mut entry) = guard.map.remove(key) {
-            entry.ciphertext.expose_as_mut_vec().zeroize();
-        }
+        guard.map.remove(key);
         Ok(())
     }
 }

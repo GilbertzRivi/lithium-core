@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: 2026 Lithium Project
 // SPDX-License-Identifier: AGPL-3.0-only
 
-use lithium_core::error::CryptoErrorKind;
+use lithium_core::error::ErrorKind;
 use lithium_core::opaque::dek::{unwrap_dek_under_export_key, wrap_dek_under_export_key};
-use lithium_core::passwords::passwords::{
+use lithium_core::passwords::{
     PasswordPolicy, generate_dek, validate_password, validate_passwords_distinct,
 };
-use lithium_core::secrets::{Byte64, SecretString};
+use lithium_core::secrets::{SecByte64, SecretString};
 
 const TEST_DEK_AAD: &[u8] = b"lithium-core/test/dek-wrap";
 
@@ -18,8 +18,8 @@ fn default_policy() -> PasswordPolicy {
     PasswordPolicy::default()
 }
 
-fn export_key(seed: u8) -> Byte64 {
-    Byte64::from_slice(&[seed; 64]).unwrap()
+fn export_key(seed: u8) -> SecByte64 {
+    SecByte64::from_slice(&[seed; 64]).unwrap()
 }
 
 #[test]
@@ -30,44 +30,44 @@ fn password_valid_default_policy() {
 #[test]
 fn password_too_short() {
     let err = validate_password(&pass("Ab1!"), default_policy()).unwrap_err();
-    assert_eq!(err.kind, CryptoErrorKind::StringPolicy);
+    assert_eq!(err.kind, ErrorKind::StringPolicy);
 }
 
 #[test]
 fn password_too_long() {
     let long = "Aa1!".repeat(300);
     let err = validate_password(&pass(&long), default_policy()).unwrap_err();
-    assert_eq!(err.kind, CryptoErrorKind::StringPolicy);
+    assert_eq!(err.kind, ErrorKind::StringPolicy);
 }
 
 #[test]
 fn password_missing_lowercase() {
     let err = validate_password(&pass("PASSW0RD!ABC"), default_policy()).unwrap_err();
-    assert_eq!(err.kind, CryptoErrorKind::StringPolicy);
+    assert_eq!(err.kind, ErrorKind::StringPolicy);
 }
 
 #[test]
 fn password_missing_uppercase() {
     let err = validate_password(&pass("passw0rd!abc"), default_policy()).unwrap_err();
-    assert_eq!(err.kind, CryptoErrorKind::StringPolicy);
+    assert_eq!(err.kind, ErrorKind::StringPolicy);
 }
 
 #[test]
 fn password_missing_digit() {
     let err = validate_password(&pass("Password!Abc"), default_policy()).unwrap_err();
-    assert_eq!(err.kind, CryptoErrorKind::StringPolicy);
+    assert_eq!(err.kind, ErrorKind::StringPolicy);
 }
 
 #[test]
 fn password_missing_special() {
     let err = validate_password(&pass("Password1Abc"), default_policy()).unwrap_err();
-    assert_eq!(err.kind, CryptoErrorKind::StringPolicy);
+    assert_eq!(err.kind, ErrorKind::StringPolicy);
 }
 
 #[test]
 fn password_with_whitespace_rejected_by_default() {
     let err = validate_password(&pass("Pass w0rd!Ab"), default_policy()).unwrap_err();
-    assert_eq!(err.kind, CryptoErrorKind::StringPolicy);
+    assert_eq!(err.kind, ErrorKind::StringPolicy);
 }
 
 #[test]
@@ -111,10 +111,7 @@ fn passwords_distinct_ok() {
 #[test]
 fn passwords_distinct_same_fails() {
     let err = validate_passwords_distinct(&pass("same"), &pass("same")).unwrap_err();
-    assert!(matches!(
-        err.kind,
-        CryptoErrorKind::InvalidCredentials { .. }
-    ));
+    assert!(matches!(err.kind, ErrorKind::InvalidCredentials { .. }));
 }
 
 #[test]

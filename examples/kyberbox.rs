@@ -6,7 +6,7 @@
 //! Run with: `cargo run -p lithium_core --example kyberbox`
 
 use lithium_core::crypto::{keys, kyberbox};
-use lithium_core::secrets::bytes::SecretBytes;
+use lithium_core::secrets::SecretBytes;
 
 fn main() -> lithium_core::Result<()> {
     // Caller-chosen domain separation; binds the ciphertext to one usage.
@@ -41,7 +41,7 @@ fn main() -> lithium_core::Result<()> {
 
     println!(
         "kyberbox round-trip ok ({} sealed body bytes)",
-        wire.enc_data.expose_as_slice().len()
+        wire.enc_data.as_slice().len()
     );
     Ok(())
 }

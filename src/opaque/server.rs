@@ -27,7 +27,7 @@ impl ServerSetup {
     pub fn deserialize(bytes: &[u8]) -> Result<Self> {
         Setup::deserialize(bytes)
             .map(Self)
-            .map_err(|_| LithiumError::internal())
+            .map_err(|_| LithiumError::internal("opaque_server_setup_decode"))
     }
 }
 
@@ -50,7 +50,7 @@ pub fn server_registration_start(
     let request = RegistrationRequest::<LithiumCipherSuite>::deserialize(request_bytes)
         .map_err(|_| bad_message())?;
     let res = ServerRegistration::start(&setup.0, request, credential_identifier)
-        .map_err(|_| LithiumError::internal())?;
+        .map_err(|_| LithiumError::internal("opaque_registration_start"))?;
     Ok(res.message.serialize().to_vec())
 }
 
@@ -69,7 +69,7 @@ pub fn server_login_start(
     server_id: &[u8],
 ) -> Result<(Vec<u8>, Vec<u8>)> {
     let record = ServerRegistration::<LithiumCipherSuite>::deserialize(record_bytes)
-        .map_err(|_| LithiumError::internal())?;
+        .map_err(|_| LithiumError::internal("opaque_record_decode"))?;
     let request = CredentialRequest::<LithiumCipherSuite>::deserialize(request_bytes)
         .map_err(|_| bad_message())?;
 
@@ -87,7 +87,7 @@ pub fn server_login_start(
         credential_identifier,
         params,
     )
-    .map_err(|_| LithiumError::internal())?;
+    .map_err(|_| LithiumError::internal("opaque_login_start"))?;
 
     Ok((
         res.message.serialize().to_vec(),
@@ -102,7 +102,7 @@ pub fn server_login_finish(
     server_id: &[u8],
 ) -> Result<()> {
     let state = ServerLogin::<LithiumCipherSuite>::deserialize(state_bytes)
-        .map_err(|_| LithiumError::internal())?;
+        .map_err(|_| LithiumError::internal("opaque_login_state_decode"))?;
     let finalization =
         CredentialFinalization::<LithiumCipherSuite>::deserialize(finalization_bytes)
             .map_err(|_| bad_message())?;

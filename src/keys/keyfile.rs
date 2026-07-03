@@ -7,11 +7,11 @@ use std::path::Path;
 
 use hkdf::Hkdf;
 use sha2::Sha256;
-use zeroize::Zeroize;
 
 use crate::crypto::{aead, keys};
-use crate::error::{CryptoErrorKind, LithiumError, Result};
-use crate::secrets::{Byte12, Byte32, FixedBytes, MasterKey32, SecretBytes};
+use crate::error::{ErrorKind, LithiumError, Result};
+use crate::public::PublicBytes;
+use crate::secrets::{MasterKey32, SecByte12, SecByte32, SecretBytes, SecretFixedBytes};
 
 const KEYFILE_MAGIC: &[u8; 4] = b"KEYF";
 const KEYFILE_VERSION: u8 = 1;
@@ -69,32 +69,32 @@ pub fn write_secure(path: &Path, data: &[u8]) -> Result<()> {
 }
 
 #[inline]
-fn aad_for(version: u8, key_type: &str) -> SecretBytes {
-    SecretBytes::new(format!("keyfile:v{}|{}", version, key_type).into_bytes())
+fn aad_for(version: u8, key_type: &str) -> Vec<u8> {
+    format!("keyfile:v{}|{}", version, key_type).into_bytes()
 }
 
 #[inline]
-fn derive_kek(mk: &MasterKey32, salt: &[u8; 32]) -> Result<Byte32> {
+fn derive_kek(mk: &MasterKey32, salt: &[u8; 32]) -> Result<SecByte32> {
     let hk = Hkdf::<Sha256>::new(Some(salt), mk.as_slice());
-    let mut out = Byte32::new_zeroed();
+    let mut out = SecByte32::new_zeroed();
     hk.expand(KEYFILE_KEK_INFO, out.as_mut_slice())?;
     Ok(out)
 }
 
 #[inline]
-fn wrap_dek(kek: &Byte32, dek: &Byte32, aad: &SecretBytes) -> Result<(Vec<u8>, [u8; 12])> {
+fn wrap_dek(kek: &SecByte32, dek: &SecByte32, aad: &[u8]) -> Result<(Vec<u8>, [u8; 12])> {
     let nonce = keys::random_fixed::<12>()?;
     let ct = aead::encrypt_raw(&SecretBytes::from_slice(dek.as_slice()), kek, &nonce, aad)?;
 
-    Ok((ct.expose_as_slice().to_vec(), *nonce.as_array()))
+    Ok((ct.as_slice().to_vec(), *nonce.as_array()))
 }
 
 #[inline]
-fn encrypt_payload(dek: &Byte32, payload: &[u8], aad: &SecretBytes) -> Result<(Vec<u8>, [u8; 12])> {
+fn encrypt_payload(dek: &SecByte32, payload: &[u8], aad: &[u8]) -> Result<(Vec<u8>, [u8; 12])> {
     let nonce = keys::random_fixed::<12>()?;
     let ct = aead::encrypt_raw(&SecretBytes::from_slice(payload), dek, &nonce, aad)?;
 
-    Ok((ct.expose_as_slice().to_vec(), *nonce.as_array()))
+    Ok((ct.as_slice().to_vec(), *nonce.as_array()))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -134,7 +134,7 @@ fn build_record(
 
 fn read_u16(buf: &[u8], idx: &mut usize) -> Result<u16> {
     if *idx + 2 > buf.len() {
-        return Err(LithiumError::new(CryptoErrorKind::InvalidLength {
+        return Err(LithiumError::new(ErrorKind::InvalidLength {
             expected: *idx + 2,
             got: buf.len(),
         }));
@@ -146,7 +146,7 @@ fn read_u16(buf: &[u8], idx: &mut usize) -> Result<u16> {
 
 fn read_u32(buf: &[u8], idx: &mut usize) -> Result<u32> {
     if *idx + 4 > buf.len() {
-        return Err(LithiumError::new(CryptoErrorKind::InvalidLength {
+        return Err(LithiumError::new(ErrorKind::InvalidLength {
             expected: *idx + 4,
             got: buf.len(),
         }));
@@ -240,38 +240,38 @@ fn unwrap_dek(
     salt: &[u8; 32],
     nonce_wrap: &[u8; 12],
     ct_wrap: &[u8],
-    aad: &SecretBytes,
-) -> Result<Byte32> {
+    aad: &[u8],
+) -> Result<SecByte32> {
     let kek = derive_kek(mk, salt)?;
-    let nonce = Byte12::from_slice(nonce_wrap)?;
-    let dek_bytes = aead::decrypt_raw(&SecretBytes::from_slice(ct_wrap), &kek, &nonce, aad)?;
-    Byte32::from_slice(dek_bytes.expose_as_slice())
+    let nonce = SecByte12::from_slice(nonce_wrap)?;
+    let dek_bytes = aead::decrypt_raw(&PublicBytes::from_slice(ct_wrap), &kek, &nonce, aad)?;
+    SecByte32::from_slice(dek_bytes.expose_as_slice())
 }
 
 fn decrypt_payload_bytes(
-    dek: &Byte32,
+    dek: &SecByte32,
     nonce_payload: &[u8; 12],
     ct_payload: &[u8],
-    aad: &SecretBytes,
+    aad: &[u8],
 ) -> Result<SecretBytes> {
-    let nonce = Byte12::from_slice(nonce_payload)?;
-    aead::decrypt_raw(&SecretBytes::from_slice(ct_payload), dek, &nonce, aad)
+    let nonce = SecByte12::from_slice(nonce_payload)?;
+    aead::decrypt_raw(&PublicBytes::from_slice(ct_payload), dek, &nonce, aad)
 }
 
 fn decrypt_payload_32(
-    dek: &Byte32,
+    dek: &SecByte32,
     nonce_payload: &[u8; 12],
     ct_payload: &[u8],
-    aad: &SecretBytes,
-) -> Result<FixedBytes<32>> {
+    aad: &[u8],
+) -> Result<SecretFixedBytes<32>> {
     let pt = decrypt_payload_bytes(dek, nonce_payload, ct_payload, aad)?;
-    FixedBytes::<32>::from_slice(pt.expose_as_slice())
+    SecretFixedBytes::<32>::from_slice(pt.expose_as_slice())
 }
 
 pub fn save_secret32_encrypted(
     path: &Path,
     mk: &MasterKey32,
-    payload: &FixedBytes<32>,
+    payload: &SecretFixedBytes<32>,
     key_type: &str,
 ) -> Result<()> {
     let dek = keys::random_fixed::<32>()?;
@@ -330,7 +330,7 @@ pub fn load_secret32_decrypted(
     path: &Path,
     mk: &MasterKey32,
     key_type: &str,
-) -> Result<FixedBytes<32>> {
+) -> Result<SecretFixedBytes<32>> {
     let buf = read_keyfile_bytes(path)?;
     let (version, alg_id, dek_len, salt, nonce_wrap, ct_wrap, nonce_payload, ct_payload) =
         parse_keyfile(&buf)?;
@@ -369,9 +369,9 @@ pub fn rewrap_keyfile_dek_to_bytes(
         version,
         alg_id,
         dek_len,
-        mut salt_old,
-        mut nonce_wrap_old,
-        mut ct_wrap_old,
+        salt_old,
+        nonce_wrap_old,
+        ct_wrap_old,
         nonce_payload,
         ct_payload,
     ) = parse_keyfile(&buf)?;
@@ -397,10 +397,6 @@ pub fn rewrap_keyfile_dek_to_bytes(
         &nonce_payload,
         &ct_payload,
     );
-
-    salt_old.zeroize();
-    nonce_wrap_old.zeroize();
-    ct_wrap_old.zeroize();
 
     Ok(SecretBytes::new(out))
 }

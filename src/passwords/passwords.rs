@@ -4,7 +4,7 @@
 use crate::{
     crypto::keys,
     error::{LithiumError, Result},
-    secrets::{Byte32, SecretString},
+    secrets::{SecByte32, SecretString},
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -88,6 +88,6 @@ pub fn validate_passwords_distinct(a: &SecretString, b: &SecretString) -> Result
     Ok(())
 }
 
-pub fn generate_dek() -> Result<Byte32> {
+pub fn generate_dek() -> Result<SecByte32> {
     keys::random_32()
 }
