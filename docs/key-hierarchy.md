@@ -101,7 +101,7 @@ read the process memory while the process is running.
 What the library's at-rest protection holds against:
 
 | Compromise                                                                          | What's exposed                                             | What's still protected                           |
-| ----------------------------------------------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------ |
+|-------------------------------------------------------------------------------------|------------------------------------------------------------|--------------------------------------------------|
 | Disk alone, without the MK or whatever the `MkProvider` uses to guard it            | public keys and encrypted `.keyf` blobs                    | private keys and sealed secrets                  |
 | Disk plus `PlainFileMkProvider` MK file                                             | all `.keyf` payloads can be decrypted                      | nothing protected by that MK                     |
 | Disk plus a properly sealed MK provider, but without the provider's unlock material | public keys and encrypted `.keyf` blobs                    | private keys and sealed secrets                  |
