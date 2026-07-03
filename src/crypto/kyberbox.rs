@@ -20,8 +20,8 @@ const KYBER_BOX_VERSION: u8 = 1;
 const KYBER_KEM_ID: u8 = 1;
 
 #[derive(Clone, Debug)]
-pub struct WirePayload {
-    pub enc_data: PublicBytes,
+pub struct KyberBoxSealed {
+    pub ciphertext: PublicBytes,
     pub kem_ct: PublicBytes,
 }
 
@@ -164,38 +164,38 @@ pub(crate) fn prep_base_key_for_decryption(
     Ok(base_key)
 }
 
-pub fn encrypt(
+pub fn seal(
     ctx: &str,
     priv_x: &SecByte32,
     peer_pub_x: &PubByte32,
     peer_k_pub: &PublicBytes,
     data: &SecretBytes,
-) -> Result<WirePayload> {
+) -> Result<KyberBoxSealed> {
     let (base_key, kem_ct) = prep_base_key_for_encryption(ctx, priv_x, peer_pub_x, peer_k_pub)?;
     let nonce = keys::random_12()?;
-    let enc_data = aead::encrypt(
+    let ciphertext = aead::encrypt(
         data,
         &base_key,
         &nonce,
         label(ctx, "data").expose_as_slice(),
     )?;
 
-    Ok(WirePayload { enc_data, kem_ct })
+    Ok(KyberBoxSealed { ciphertext, kem_ct })
 }
 
-pub fn decrypt(
+pub fn open(
     ctx: &str,
     priv_x: &SecByte32,
     peer_pub_x: &PubByte32,
     kyber_priv: &SecretBytes,
-    wire: &WirePayload,
+    kyber_box_sealed: &KyberBoxSealed,
 ) -> Result<SecretBytes> {
-    let base_key = prep_base_key_for_decryption(ctx, priv_x, peer_pub_x, kyber_priv, &wire.kem_ct)?;
-    let dec_data = aead::decrypt(
-        &wire.enc_data,
+    let base_key = prep_base_key_for_decryption(ctx, priv_x, peer_pub_x, kyber_priv, &kyber_box_sealed.kem_ct)?;
+    let plaintext = aead::decrypt(
+        &kyber_box_sealed.ciphertext,
         &base_key,
         label(ctx, "data").expose_as_slice(),
     )?;
 
-    Ok(dec_data)
+    Ok(plaintext)
 }

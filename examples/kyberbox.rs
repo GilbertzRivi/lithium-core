@@ -21,7 +21,7 @@ fn main() -> lithium_core::Result<()> {
 
     let body = SecretBytes::from_slice(b"attack at dawn");
 
-    let wire = kyberbox::encrypt(
+    let wire = kyberbox::seal(
         ctx,
         &sender_priv_x,
         &recipient_pub_x,
@@ -29,7 +29,7 @@ fn main() -> lithium_core::Result<()> {
         &body,
     )?;
 
-    let plain_data = kyberbox::decrypt(
+    let plain_data = kyberbox::open(
         ctx,
         &recipient_priv_x,
         &sender_pub_x,
@@ -41,7 +41,7 @@ fn main() -> lithium_core::Result<()> {
 
     println!(
         "kyberbox round-trip ok ({} sealed body bytes)",
-        wire.enc_data.as_slice().len()
+        wire.ciphertext.as_slice().len()
     );
     Ok(())
 }

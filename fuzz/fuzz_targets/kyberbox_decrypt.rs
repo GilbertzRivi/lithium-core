@@ -7,7 +7,7 @@ use std::sync::OnceLock;
 
 use libfuzzer_sys::fuzz_target;
 use lithium_core::crypto::keys;
-use lithium_core::crypto::kyberbox::{self, WirePayload};
+use lithium_core::crypto::kyberbox::{self, KyberBoxSealed};
 use lithium_core::public::{PubByte32, PublicBytes};
 use lithium_core::secrets::{SecByte32, SecretBytes};
 
@@ -25,9 +25,9 @@ fuzz_target!(|data: &[u8]| {
     let (x_priv, peer_pub_x, k_priv) = kp();
     let n = data.len();
     let (a, b) = (n / 3, 2 * n / 3);
-    let wire = WirePayload {
+    let wire = KyberBoxSealed {
         kem_ct: PublicBytes::from_slice(&data[..a]),
-        enc_data: PublicBytes::from_slice(&data[a..b])
+        ciphertext: PublicBytes::from_slice(&data[a..b]),
     };
-    let _ = kyberbox::decrypt("fuzz", x_priv, peer_pub_x, k_priv, &wire);
+    let _ = kyberbox::open("fuzz", x_priv, peer_pub_x, k_priv, &wire);
 });

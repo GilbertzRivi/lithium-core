@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 
 use lithium_core::crypto::hash::sha256;
-use lithium_core::crypto::kyberbox::WirePayload;
+use lithium_core::crypto::kyberbox::KyberBoxSealed;
 use lithium_core::crypto::{aead, kyberbox, sign};
 use lithium_core::hpke::{self, HpkeEnc, HpkeSealed};
 use lithium_core::public::{PubByte32, PublicBytes};
@@ -46,12 +46,12 @@ fn kyberbox_wire_decrypts_to_pinned_plaintext() {
     let rx_x_priv = SecByte32::from_hex(vectors["RX_X_PRIV"]).unwrap();
     let msg_x_pub = PubByte32::from_hex(vectors["MSG_X_PUB"]).unwrap();
     let kyber_priv = SecretBytes::from_hex(vectors["KYBER_PRIV"]).unwrap();
-    let wire = WirePayload {
-        enc_data: PublicBytes::from_hex(vectors["ENC_DATA"]).unwrap(),
+    let wire = KyberBoxSealed {
+        ciphertext: PublicBytes::from_hex(vectors["ENC_DATA"]).unwrap(),
         kem_ct: PublicBytes::from_hex(vectors["KEM_CT"]).unwrap(),
     };
 
-    let body = kyberbox::decrypt(
+    let body = kyberbox::open(
         "golden/kyberbox/v1",
         &rx_x_priv,
         &msg_x_pub,
