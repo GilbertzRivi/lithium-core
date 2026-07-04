@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 use lithium_core::ErrorKind;
-use lithium_core::keys::{KeyManager, KeyStoreKind};
+use lithium_core::keys::{KeyManager, PublicCachePolicy, RotationErrorPolicy};
 
 mod common;
 use common::FileMk;
@@ -14,10 +14,11 @@ fn tmp_dir(tag: &str) -> std::path::PathBuf {
 fn start(dir: &std::path::Path) -> lithium_core::Result<KeyManager<FileMk>> {
     KeyManager::start(
         dir,
-        KeyStoreKind::Server,
         FileMk {
             path: dir.join("mk"),
         },
+        PublicCachePolicy::RepairMissingOnly,
+        RotationErrorPolicy::Callback(Box::new(|_| {})),
     )
 }
 
@@ -48,19 +49,21 @@ fn different_kinds_do_not_contend() {
     std::fs::remove_dir_all(&dir).ok();
 
     let _server = KeyManager::start(
-        &dir,
-        KeyStoreKind::Server,
+        &dir.join("server"),
         FileMk {
             path: dir.join("server-mk"),
         },
+        PublicCachePolicy::RepairMissingOnly,
+        RotationErrorPolicy::Callback(Box::new(|_| {})),
     )
     .unwrap();
     let _user = KeyManager::start(
-        &dir,
-        KeyStoreKind::User,
+        &dir.join("user"),
         FileMk {
             path: dir.join("user-mk"),
         },
+        PublicCachePolicy::RepairMissingOnly,
+        RotationErrorPolicy::Callback(Box::new(|_| {})),
     )
     .expect("distinct store directories must not share a lock");
 

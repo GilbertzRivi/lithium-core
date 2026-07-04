@@ -3,6 +3,9 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Condvar, Mutex, RwLock};
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use crate::crypto::{aead, keys};
@@ -36,30 +39,12 @@ const ED_PRIV: &str = "ed25519.keyf";
 const X_PRIV: &str = "x25519.keyf";
 const KYBER_PRIV: &str = "kyber-mlkem1024.keyf";
 const DILI_PRIV: &str = "dilithium-mldsa87.keyf";
-
-const LEGACY_STATE_FILE: &str = "state.keyf";
-
 const KT_ED_SEED: &str = "ed25519-seed-v1";
 const KT_X_SEED: &str = "x25519-seed-v1";
 const KT_KYBER_SK: &str = "kyber-mlkem1024-sk-v1";
 const KT_DILI_SK: &str = "dilithium-mldsa87-sk-v1";
 const KT_ROTATE_NEXT_OLD: &str = "rotate-next-mk-old-v1";
 const KT_ROTATE_NEXT_NEW: &str = "rotate-next-mk-new-v1";
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum KeyStoreKind {
-    Server,
-    User,
-}
-
-impl KeyStoreKind {
-    fn dir_name(self) -> &'static str {
-        match self {
-            Self::Server => "server",
-            Self::User => "user",
-        }
-    }
-}
 
 pub trait MkProvider {
     fn load_mk(&self) -> Result<SecByte32>;
@@ -115,19 +100,69 @@ pub enum MemoryLocking {
     BestEffort,
 }
 
-pub struct KeyManager<P: MkProvider> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PublicCachePolicy {
+    Strict,
+    RepairMissingOnly,
+}
+
+pub enum RotationErrorPolicy {
+    Strict(Box<dyn Fn(&LithiumError) + Send + Sync>),
+    Callback(Box<dyn Fn(&LithiumError) + Send + Sync>),
+}
+
+struct WorkerCtl {
+    stop: bool,
+    rotate_every: Duration,
+    next_rotation_at: Instant,
+}
+
+struct Shared<P: MkProvider> {
     root_dir: PathBuf,
     pub_dir: PathBuf,
     priv_dir: PathBuf,
     secrets_dir: PathBuf,
     rotate_dir: PathBuf,
     mk_provider: P,
-    public_keys: PublicKeys,
     arena: SecretArena,
-    #[allow(dead_code)]
-    lock_file: fs::File,
-    rotate_every: Duration,
-    next_rotation_at: Instant,
+    public_cache_policy: PublicCachePolicy,
+    keys: RwLock<PublicKeys>,
+    error_policy: RotationErrorPolicy,
+    poisoned: AtomicBool,
+    ctl: Mutex<WorkerCtl>,
+    signal: Condvar,
+    _lock_file: fs::File,
+}
+
+struct RotationGuard<P: MkProvider> {
+    shared: Arc<Shared<P>>,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl<P: MkProvider> Drop for RotationGuard<P> {
+    fn drop(&mut self) {
+        if let Ok(mut ctl) = self.shared.ctl.lock() {
+            ctl.stop = true;
+        }
+        self.shared.signal.notify_all();
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+pub struct KeyManager<P: MkProvider> {
+    shared: Arc<Shared<P>>,
+    _rotation: Arc<RotationGuard<P>>,
+}
+
+impl<P: MkProvider> Clone for KeyManager<P> {
+    fn clone(&self) -> Self {
+        Self {
+            shared: self.shared.clone(),
+            _rotation: self._rotation.clone(),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -174,54 +209,91 @@ fn write_marker(path: &Path, data: &[u8]) -> Result<()> {
     Ok(())
 }
 
-#[inline]
-fn read_pub32(path: &Path) -> Result<PubByte32> {
-    let bytes = keyfile::read_keyfile_bytes(path)?;
-    PubByte32::from_slice(bytes.expose_as_slice())
+fn reconcile_public_cache(
+    pub_path: &Path,
+    authoritative: &[u8],
+    policy: PublicCachePolicy,
+    key_type: &'static str,
+) -> Result<()> {
+    match keyfile::read_keyfile_bytes(pub_path) {
+        Ok(on_disk) => {
+            if on_disk.expose_as_slice() != authoritative {
+                return Err(LithiumError::invalid_public_key(
+                    key_type,
+                    "public_key_mismatch",
+                ));
+            }
+            Ok(())
+        }
+        Err(e) if e.is_not_found() => match policy {
+            PublicCachePolicy::Strict => Err(LithiumError::invalid_public_key(
+                key_type,
+                "public_key_missing",
+            )),
+            PublicCachePolicy::RepairMissingOnly => {
+                keyfile::write_secure(pub_path, authoritative)?;
+                if let Some(parent) = pub_path.parent() {
+                    sync_dir(parent)?;
+                }
+                Ok(())
+            }
+        },
+        Err(e) => Err(e),
+    }
 }
 
-#[inline]
-fn read_pub_bytes(path: &Path) -> Result<PublicBytes> {
-    Ok(PublicBytes::from_slice(
-        keyfile::read_keyfile_bytes(path)?.expose_as_slice(),
-    ))
-}
-
-fn sync_public_cache(pub_dir: &Path, pks: &PublicKeys) -> Result<()> {
-    fs::create_dir_all(pub_dir).map_err(LithiumError::io)?;
-    keyfile::write_secure(&pub_dir.join(ED_PUB), pks.ed25519.as_slice())?;
-    keyfile::write_secure(&pub_dir.join(X_PUB), pks.x25519.as_slice())?;
-    keyfile::write_secure(&pub_dir.join(KYBER_PUB), pks.kyber.as_slice())?;
-    keyfile::write_secure(&pub_dir.join(DILI_PUB), pks.dilithium.as_slice())?;
-    sync_dir(pub_dir)?;
-    Ok(())
-}
-
-fn load_public_cache(pub_dir: &Path) -> Result<PublicKeys> {
-    Ok(PublicKeys {
-        ed25519: read_pub32(&pub_dir.join(ED_PUB))?,
-        x25519: read_pub32(&pub_dir.join(X_PUB))?,
-        kyber: read_pub_bytes(&pub_dir.join(KYBER_PUB))?,
-        dilithium: read_pub_bytes(&pub_dir.join(DILI_PUB))?,
-    })
-}
-
-fn ensure_seed32_born_locked(
+fn ensure_seed_keypair<const N: usize, T: AsRef<[u8]>>(
     arena: &SecretArena,
-    path: &Path,
+    priv_path: &Path,
+    pub_path: &Path,
     mk: &MasterKey32,
-    key_type: &str,
-    pub_from_seed: impl FnOnce(&[u8; 32]) -> PubByte32,
-) -> Result<PubByte32> {
-    if path.exists() {
-        let seed = keyfile::load_secret32_decrypted(path, mk, key_type)?;
-        return Ok(pub_from_seed(seed.as_array()));
+    key_type: &'static str,
+    policy: PublicCachePolicy,
+    pub_from_seed: impl Fn(&[u8]) -> Result<T>,
+) -> Result<T> {
+    if priv_path.exists() {
+        let seed = keyfile::load_bytes_decrypted(priv_path, mk, key_type)?;
+        if seed.len() != N {
+            return Err(LithiumError::malformed_keyfile());
+        }
+        let pk = pub_from_seed(seed.expose_as_slice())?;
+        reconcile_public_cache(pub_path, pk.as_ref(), policy, key_type)?;
+        return Ok(pk);
     }
 
-    let seed = arena.random_fixed::<32>()?;
-    let pk = pub_from_seed(seed.as_array());
-    keyfile::save_bytes_encrypted(path, mk, seed.as_slice(), key_type)?;
+    match keyfile::read_keyfile_bytes(pub_path) {
+        Ok(_) => {
+            return Err(LithiumError::invalid_public_key(
+                key_type,
+                "public_key_without_secret",
+            ));
+        }
+        Err(e) if !e.is_not_found() => return Err(e),
+        Err(_) => {}
+    }
+
+    let seed = arena.random_fixed::<N>()?;
+    let pk = pub_from_seed(seed.as_slice())?;
+    keyfile::save_bytes_encrypted(priv_path, mk, seed.as_slice(), key_type)?;
+    keyfile::write_secure(pub_path, pk.as_ref())?;
+    if let Some(parent) = pub_path.parent() {
+        sync_dir(parent)?;
+    }
     Ok(pk)
+}
+
+fn ed25519_pub_from_seed_slice(seed: &[u8]) -> Result<PubByte32> {
+    let arr: &[u8; 32] = seed
+        .try_into()
+        .map_err(|_| LithiumError::invalid_len(32, seed.len()))?;
+    Ok(keys::ed25519_pub_from_seed(arr))
+}
+
+fn x25519_pub_from_seed_slice(seed: &[u8]) -> Result<PubByte32> {
+    let arr: &[u8; 32] = seed
+        .try_into()
+        .map_err(|_| LithiumError::invalid_len(32, seed.len()))?;
+    Ok(keys::x25519_pub_from_seed(arr))
 }
 
 fn label_hex(label: &[u8]) -> String {
@@ -280,79 +352,57 @@ fn ensure_asymmetric_material(
     priv_dir: &Path,
     mk: &MasterKey32,
     arena: &SecretArena,
+    public_cache_policy: PublicCachePolicy,
 ) -> Result<PublicKeys> {
     fs::create_dir_all(pub_dir).map_err(LithiumError::io)?;
     fs::create_dir_all(priv_dir).map_err(LithiumError::io)?;
 
-    let ed25519 = ensure_seed32_born_locked(
+    let ed25519 = ensure_seed_keypair::<32, PubByte32>(
         arena,
         &priv_dir.join(ED_PRIV),
+        &pub_dir.join(ED_PUB),
         mk,
         KT_ED_SEED,
-        keys::ed25519_pub_from_seed,
+        public_cache_policy,
+        ed25519_pub_from_seed_slice,
     )?;
 
-    let x25519 = ensure_seed32_born_locked(
+    let x25519 = ensure_seed_keypair::<32, PubByte32>(
         arena,
         &priv_dir.join(X_PRIV),
+        &pub_dir.join(X_PUB),
         mk,
         KT_X_SEED,
-        keys::x25519_pub_from_seed,
+        public_cache_policy,
+        x25519_pub_from_seed_slice,
     )?;
 
-    let kyber = {
-        let priv_path = priv_dir.join(KYBER_PRIV);
-        let pub_path = pub_dir.join(KYBER_PUB);
+    let kyber = ensure_seed_keypair::<64, PublicBytes>(
+        arena,
+        &priv_dir.join(KYBER_PRIV),
+        &pub_dir.join(KYBER_PUB),
+        mk,
+        KT_KYBER_SK,
+        public_cache_policy,
+        keys::mlkem1024_pub_from_seed,
+    )?;
 
-        if priv_path.exists() && pub_path.exists() {
-            let _ = keyfile::load_bytes_decrypted(&priv_path, mk, KT_KYBER_SK)?;
-            read_pub_bytes(&pub_path)?
-        } else if priv_path.exists() || pub_path.exists() {
-            return Err(LithiumError::invalid_credentials(
-                "keystore_layout_inconsistent",
-            ));
-        } else {
-            let seed = arena.random_fixed::<64>()?;
-            let pk_bytes = keys::mlkem1024_pub_from_seed(seed.as_slice())?;
-            keyfile::save_bytes_encrypted(&priv_path, mk, seed.as_slice(), KT_KYBER_SK)?;
-            keyfile::write_secure(&pub_path, pk_bytes.as_slice())?;
-            pk_bytes
-        }
-    };
+    let dilithium = ensure_seed_keypair::<32, PublicBytes>(
+        arena,
+        &priv_dir.join(DILI_PRIV),
+        &pub_dir.join(DILI_PUB),
+        mk,
+        KT_DILI_SK,
+        public_cache_policy,
+        keys::mldsa87_pub_from_seed,
+    )?;
 
-    let dilithium = {
-        let priv_path = priv_dir.join(DILI_PRIV);
-        let pub_path = pub_dir.join(DILI_PUB);
-
-        if priv_path.exists() && pub_path.exists() {
-            let _ = keyfile::load_bytes_decrypted(&priv_path, mk, KT_DILI_SK)?;
-            read_pub_bytes(&pub_path)?
-        } else if priv_path.exists() || pub_path.exists() {
-            return Err(LithiumError::invalid_credentials(
-                "keystore_layout_inconsistent",
-            ));
-        } else {
-            let seed = arena.random_fixed::<32>()?;
-            let pk_bytes = keys::mldsa87_pub_from_seed(seed.as_slice())?;
-            keyfile::save_bytes_encrypted(&priv_path, mk, seed.as_slice(), KT_DILI_SK)?;
-            keyfile::write_secure(&pub_path, pk_bytes.as_slice())?;
-            pk_bytes
-        }
-    };
-
-    let pks = PublicKeys {
+    Ok(PublicKeys {
         ed25519,
         x25519,
         kyber,
         dilithium,
-    };
-
-    sync_public_cache(pub_dir, &pks)?;
-    Ok(pks)
-}
-
-fn has_legacy_or_inconsistent_layout(root_dir: &Path) -> bool {
-    root_dir.join(LEGACY_STATE_FILE).exists()
+    })
 }
 
 fn list_dir_keyfiles(dir: &Path) -> Result<Vec<PathBuf>> {
@@ -529,22 +579,145 @@ fn recover_pending_rotation_if_any<P: MkProvider>(
     Ok(())
 }
 
-impl<P: MkProvider> KeyManager<P> {
-    pub fn start(base_dir: &Path, kind: KeyStoreKind, mk_provider: P) -> Result<Self> {
-        Self::start_with_locking(base_dir, kind, mk_provider, MemoryLocking::Require)
+impl<P: MkProvider> Shared<P> {
+    fn check_live(&self) -> Result<()> {
+        if self.poisoned.load(Ordering::Acquire) {
+            return Err(LithiumError::internal("keymanager_rotation_disabled"));
+        }
+        Ok(())
     }
 
-    pub fn start_best_effort(base_dir: &Path, kind: KeyStoreKind, mk_provider: P) -> Result<Self> {
-        Self::start_with_locking(base_dir, kind, mk_provider, MemoryLocking::BestEffort)
+    fn read_gate(&self) -> Result<std::sync::RwLockReadGuard<'_, PublicKeys>> {
+        self.check_live()?;
+        self.keys
+            .read()
+            .map_err(|_| LithiumError::internal("keymanager_gate_poisoned"))
+    }
+
+    fn rotate_now(&self) -> Result<()> {
+        let _write = self
+            .keys
+            .write()
+            .map_err(|_| LithiumError::internal("keymanager_gate_poisoned"))?;
+
+        recover_pending_rotation_if_any(
+            &self.root_dir,
+            &self.priv_dir,
+            &self.secrets_dir,
+            &self.rotate_dir,
+            &self.mk_provider,
+        )?;
+
+        cleanup_rotation_dir(&self.rotate_dir)?;
+        fs::create_dir_all(&self.rotate_dir).map_err(LithiumError::io)?;
+        sync_dir(&self.rotate_dir)?;
+
+        let old_mk = self.mk_provider.load_mk()?;
+        let new_mk = keys::random_master_key32()?;
+        let targets = collect_rewrap_targets(&self.root_dir, &self.priv_dir, &self.secrets_dir)?;
+
+        let next_old_path = self.rotate_dir.join(ROTATE_NEXT_OLD_FILE);
+        let next_new_path = self.rotate_dir.join(ROTATE_NEXT_NEW_FILE);
+        keyfile::save_secret32_encrypted(&next_old_path, &old_mk, &new_mk, KT_ROTATE_NEXT_OLD)?;
+        keyfile::save_secret32_encrypted(&next_new_path, &new_mk, &new_mk, KT_ROTATE_NEXT_NEW)?;
+        sync_dir(&self.rotate_dir)?;
+
+        prepare_staged_files(&self.rotate_dir, &old_mk, &new_mk, &targets)?;
+        write_marker(&self.rotate_dir.join(ROTATE_READY_FILE), b"ready")?;
+
+        apply_staged_files(&self.rotate_dir, &targets)?;
+        self.mk_provider.store_mk(&new_mk)?;
+        cleanup_rotation_dir(&self.rotate_dir)?;
+        Ok(())
+    }
+
+    fn handle_rotation_error(&self, e: &LithiumError) -> bool {
+        match &self.error_policy {
+            RotationErrorPolicy::Strict(cb) => {
+                self.poisoned.store(true, Ordering::Release);
+                cb(e);
+                true
+            }
+            RotationErrorPolicy::Callback(cb) => {
+                cb(e);
+                false
+            }
+        }
+    }
+}
+
+fn rotate_loop<P: MkProvider>(shared: &Arc<Shared<P>>) {
+    let mut ctl = shared.ctl.lock().unwrap_or_else(|e| e.into_inner());
+    loop {
+        if ctl.stop {
+            return;
+        }
+        let now = Instant::now();
+        if now >= ctl.next_rotation_at {
+            let every = ctl.rotate_every;
+            drop(ctl);
+            let stop = match shared.rotate_now() {
+                Ok(()) => false,
+                Err(e) => shared.handle_rotation_error(&e),
+            };
+            if stop {
+                return;
+            }
+            ctl = shared.ctl.lock().unwrap_or_else(|e| e.into_inner());
+            if ctl.stop {
+                return;
+            }
+            ctl.next_rotation_at = Instant::now() + every;
+            continue;
+        }
+        let wait = ctl.next_rotation_at.saturating_duration_since(now);
+        ctl = shared
+            .signal
+            .wait_timeout(ctl, wait)
+            .unwrap_or_else(|e| e.into_inner())
+            .0;
+    }
+}
+
+impl<P: MkProvider + Send + Sync + 'static> KeyManager<P> {
+    pub fn start(
+        base_dir: &Path,
+        mk_provider: P,
+        public_cache_policy: PublicCachePolicy,
+        rotation_error_policy: RotationErrorPolicy,
+    ) -> Result<Self> {
+        Self::start_with_locking(
+            base_dir,
+            mk_provider,
+            MemoryLocking::Require,
+            public_cache_policy,
+            rotation_error_policy,
+        )
+    }
+
+    pub fn start_best_effort(
+        base_dir: &Path,
+        mk_provider: P,
+        public_cache_policy: PublicCachePolicy,
+        rotation_error_policy: RotationErrorPolicy,
+    ) -> Result<Self> {
+        Self::start_with_locking(
+            base_dir,
+            mk_provider,
+            MemoryLocking::BestEffort,
+            public_cache_policy,
+            rotation_error_policy,
+        )
     }
 
     fn start_with_locking(
         base_dir: &Path,
-        kind: KeyStoreKind,
         mk_provider: P,
         locking: MemoryLocking,
+        public_cache_policy: PublicCachePolicy,
+        rotation_error_policy: RotationErrorPolicy,
     ) -> Result<Self> {
-        let root_dir = base_dir.join(kind.dir_name());
+        let root_dir = base_dir.join("KeyManager");
         let pub_dir = root_dir.join(PUB_DIR);
         let priv_dir = root_dir.join(PRIV_DIR);
         let secrets_dir = root_dir.join(SECRETS_DIR);
@@ -566,12 +739,6 @@ impl<P: MkProvider> KeyManager<P> {
             Err(e) => return Err(e),
         }
 
-        if has_legacy_or_inconsistent_layout(&root_dir) {
-            return Err(LithiumError::invalid_credentials(
-                "legacy_keystore_layout_unsupported",
-            ));
-        }
-
         recover_pending_rotation_if_any(
             &root_dir,
             &priv_dir,
@@ -586,55 +753,105 @@ impl<P: MkProvider> KeyManager<P> {
             MemoryLocking::Require => SecretArena::with_capacity(ARENA_CAPACITY)?,
             MemoryLocking::BestEffort => SecretArena::with_capacity_best_effort(ARENA_CAPACITY)?,
         };
-        let public_keys = ensure_asymmetric_material(&pub_dir, &priv_dir, &root_mk, &arena)?;
+        let public_keys =
+            ensure_asymmetric_material(&pub_dir, &priv_dir, &root_mk, &arena, public_cache_policy)?;
 
-        Ok(Self {
+        let shared = Arc::new(Shared {
             root_dir,
             pub_dir,
             priv_dir,
             secrets_dir,
             rotate_dir,
             mk_provider,
-            public_keys,
             arena,
-            lock_file,
-            rotate_every: DEFAULT_ROTATE_EVERY,
-            next_rotation_at: Instant::now() + DEFAULT_ROTATE_EVERY,
+            public_cache_policy,
+            keys: RwLock::new(public_keys),
+            error_policy: rotation_error_policy,
+            poisoned: AtomicBool::new(false),
+            ctl: Mutex::new(WorkerCtl {
+                stop: false,
+                rotate_every: DEFAULT_ROTATE_EVERY,
+                next_rotation_at: Instant::now() + DEFAULT_ROTATE_EVERY,
+            }),
+            signal: Condvar::new(),
+            _lock_file: lock_file,
+        });
+
+        let worker = shared.clone();
+        let handle = thread::Builder::new()
+            .name("lithium-mk-rotation".into())
+            .spawn(move || rotate_loop(&worker))
+            .map_err(LithiumError::io)?;
+
+        Ok(Self {
+            shared: shared.clone(),
+            _rotation: Arc::new(RotationGuard {
+                shared,
+                handle: Some(handle),
+            }),
         })
     }
 
     #[cfg(feature = "insecure-plaintext-mk")]
     pub fn start_plain(
         base_dir: &Path,
-        kind: KeyStoreKind,
+        public_cache_policy: PublicCachePolicy,
+        rotation_error_policy: RotationErrorPolicy,
     ) -> Result<KeyManager<InsecurePlaintextMkProvider>> {
-        let mk_path = base_dir.join(kind.dir_name()).join("mk");
-        let provider = InsecurePlaintextMkProvider::new(mk_path);
-        KeyManager::start(base_dir, kind, provider)
+        let provider = InsecurePlaintextMkProvider::new(base_dir.join("mk"));
+        KeyManager::start(
+            base_dir,
+            provider,
+            public_cache_policy,
+            rotation_error_policy,
+        )
     }
 
-    pub fn public_keys(&self) -> &PublicKeys {
-        &self.public_keys
+    pub fn public_keys(&self) -> PublicKeys {
+        self.shared
+            .keys
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     pub fn memory_locked(&self) -> bool {
-        self.arena.is_locked()
+        self.shared.arena.is_locked()
     }
 
-    pub fn set_rotate_interval(&mut self, interval: Duration) {
-        self.rotate_every = interval;
-        self.next_rotation_at = Instant::now() + interval;
+    pub fn set_rotate_interval(&self, interval: Duration) {
+        {
+            let mut ctl = self.shared.ctl.lock().unwrap_or_else(|e| e.into_inner());
+            ctl.rotate_every = interval;
+            ctl.next_rotation_at = Instant::now() + interval;
+        }
+        self.shared.signal.notify_all();
     }
 
-    pub fn reload_public_keys(&mut self) -> Result<()> {
-        self.public_keys = load_public_cache(&self.pub_dir)?;
+    pub fn reload_public_keys(&self) -> Result<()> {
+        self.shared.check_live()?;
+        let mut guard = self
+            .shared
+            .keys
+            .write()
+            .map_err(|_| LithiumError::internal("keymanager_gate_poisoned"))?;
+        let mk = self.shared.mk_provider.load_mk()?;
+        *guard = ensure_asymmetric_material(
+            &self.shared.pub_dir,
+            &self.shared.priv_dir,
+            &mk,
+            &self.shared.arena,
+            self.shared.public_cache_policy,
+        )?;
         Ok(())
     }
 
     pub fn derive_secret32(&self, label: &[u8]) -> Result<SecByte32> {
-        let root_mk = self.mk_provider.load_mk()?;
-        self.mk_provider
-            .derive_secret32(&root_mk, label, &self.secrets_dir)
+        let _gate = self.shared.read_gate()?;
+        let root_mk = self.shared.mk_provider.load_mk()?;
+        self.shared
+            .mk_provider
+            .derive_secret32(&root_mk, label, &self.shared.secrets_dir)
     }
 
     pub fn encrypt_with_derived(
@@ -658,34 +875,40 @@ impl<P: MkProvider> KeyManager<P> {
         aead::decrypt(blob, &dek, aad)
     }
 
-    pub fn mk_provider_mut(&mut self) -> &mut P {
-        &mut self.mk_provider
-    }
-
     pub fn load_or_create_sealed_blob(
         &self,
         label: &[u8],
         generate: impl FnOnce() -> Result<SecretBytes>,
     ) -> Result<SecretBytes> {
-        let root_mk = self.mk_provider.load_mk()?;
-        load_or_create_label_bytes(&self.secrets_dir, &root_mk, label, generate)
+        let _gate = self.shared.read_gate()?;
+        let root_mk = self.shared.mk_provider.load_mk()?;
+        load_or_create_label_bytes(&self.shared.secrets_dir, &root_mk, label, generate)
     }
 
     pub fn with_signing_keys<R>(
         &self,
         f: impl FnOnce(ArenaByte32, ArenaByte32) -> Result<R>,
     ) -> Result<R> {
-        let mk = self.mk_provider.load_mk()?;
-        let ed_seed =
-            keyfile::load_secret32_decrypted(&self.priv_dir.join(ED_PRIV), &mk, KT_ED_SEED)?;
-        let dili_sk =
-            keyfile::load_bytes_decrypted(&self.priv_dir.join(DILI_PRIV), &mk, KT_DILI_SK)?;
-        let ed_locked = self.arena.store_fixed::<32>(ed_seed.as_array())?;
-        let dili_locked = self
-            .arena
-            .store_slice_fixed::<32>(dili_sk.expose_as_slice())?;
-        drop(ed_seed);
-        drop(dili_sk);
+        let (ed_locked, dili_locked) = {
+            let _gate = self.shared.read_gate()?;
+            let mk = self.shared.mk_provider.load_mk()?;
+            let ed_seed = keyfile::load_secret32_decrypted(
+                &self.shared.priv_dir.join(ED_PRIV),
+                &mk,
+                KT_ED_SEED,
+            )?;
+            let dili_sk = keyfile::load_bytes_decrypted(
+                &self.shared.priv_dir.join(DILI_PRIV),
+                &mk,
+                KT_DILI_SK,
+            )?;
+            let ed_locked = self.shared.arena.store_fixed::<32>(ed_seed.as_array())?;
+            let dili_locked = self
+                .shared
+                .arena
+                .store_slice_fixed::<32>(dili_sk.expose_as_slice())?;
+            (ed_locked, dili_locked)
+        };
         f(ed_locked, dili_locked)
     }
 
@@ -693,55 +916,27 @@ impl<P: MkProvider> KeyManager<P> {
         &self,
         f: impl FnOnce(ArenaByte32, ArenaByte64) -> Result<R>,
     ) -> Result<R> {
-        let mk = self.mk_provider.load_mk()?;
-        let x_seed = keyfile::load_secret32_decrypted(&self.priv_dir.join(X_PRIV), &mk, KT_X_SEED)?;
-        let kyber_sk =
-            keyfile::load_bytes_decrypted(&self.priv_dir.join(KYBER_PRIV), &mk, KT_KYBER_SK)?;
-        let x_locked = self.arena.store_fixed::<32>(x_seed.as_array())?;
-        let kyber_locked = self
-            .arena
-            .store_slice_fixed::<64>(kyber_sk.expose_as_slice())?;
-        drop(x_seed);
-        drop(kyber_sk);
+        let (x_locked, kyber_locked) = {
+            let _gate = self.shared.read_gate()?;
+            let mk = self.shared.mk_provider.load_mk()?;
+            let x_seed = keyfile::load_secret32_decrypted(
+                &self.shared.priv_dir.join(X_PRIV),
+                &mk,
+                KT_X_SEED,
+            )?;
+            let kyber_sk = keyfile::load_bytes_decrypted(
+                &self.shared.priv_dir.join(KYBER_PRIV),
+                &mk,
+                KT_KYBER_SK,
+            )?;
+            let x_locked = self.shared.arena.store_fixed::<32>(x_seed.as_array())?;
+            let kyber_locked = self
+                .shared
+                .arena
+                .store_slice_fixed::<64>(kyber_sk.expose_as_slice())?;
+            (x_locked, kyber_locked)
+        };
         f(x_locked, kyber_locked)
-    }
-
-    pub fn maybe_rotate_mk(&mut self) -> Result<()> {
-        recover_pending_rotation_if_any(
-            &self.root_dir,
-            &self.priv_dir,
-            &self.secrets_dir,
-            &self.rotate_dir,
-            &self.mk_provider,
-        )?;
-
-        if Instant::now() < self.next_rotation_at {
-            return Ok(());
-        }
-
-        cleanup_rotation_dir(&self.rotate_dir)?;
-        fs::create_dir_all(&self.rotate_dir).map_err(LithiumError::io)?;
-        sync_dir(&self.rotate_dir)?;
-
-        let old_mk = self.mk_provider.load_mk()?;
-        let new_mk = keys::random_master_key32()?;
-        let targets = collect_rewrap_targets(&self.root_dir, &self.priv_dir, &self.secrets_dir)?;
-
-        let next_old_path = self.rotate_dir.join(ROTATE_NEXT_OLD_FILE);
-        let next_new_path = self.rotate_dir.join(ROTATE_NEXT_NEW_FILE);
-        keyfile::save_secret32_encrypted(&next_old_path, &old_mk, &new_mk, KT_ROTATE_NEXT_OLD)?;
-        keyfile::save_secret32_encrypted(&next_new_path, &new_mk, &new_mk, KT_ROTATE_NEXT_NEW)?;
-        sync_dir(&self.rotate_dir)?;
-
-        prepare_staged_files(&self.rotate_dir, &old_mk, &new_mk, &targets)?;
-        write_marker(&self.rotate_dir.join(ROTATE_READY_FILE), b"ready")?;
-
-        apply_staged_files(&self.rotate_dir, &targets)?;
-        self.mk_provider.store_mk(&new_mk)?;
-        self.next_rotation_at = Instant::now() + self.rotate_every;
-
-        cleanup_rotation_dir(&self.rotate_dir)?;
-        Ok(())
     }
 }
 

@@ -15,7 +15,7 @@ use argon2::Argon2;
 use zeroize::Zeroize;
 
 use lithium_core::crypto::{aead, keys};
-use lithium_core::keys::{KeyManager, KeyStoreKind, MkProvider};
+use lithium_core::keys::{KeyManager, MkProvider, PublicCachePolicy, RotationErrorPolicy};
 use lithium_core::public::PublicBytes;
 use lithium_core::secrets::{SecByte32, SecretBytes};
 use lithium_core::{LithiumError, Result};
@@ -83,13 +83,23 @@ fn main() -> Result<()> {
         passphrase: SecretBytes::from_slice(b"correct horse battery staple"),
     };
 
-    let km = KeyManager::start(&dir, KeyStoreKind::User, make())?;
-    let first = km.public_keys().clone();
+    let km = KeyManager::start(
+        &dir,
+        make(),
+        PublicCachePolicy::RepairMissingOnly,
+        RotationErrorPolicy::Callback(Box::new(|_| {})),
+    )?;
+    let first = km.public_keys();
 
     // Release the exclusive store lock before reopening (one instance per store).
     drop(km);
 
-    let reopened = KeyManager::start(&dir, KeyStoreKind::User, make())?;
+    let reopened = KeyManager::start(
+        &dir,
+        make(),
+        PublicCachePolicy::RepairMissingOnly,
+        RotationErrorPolicy::Callback(Box::new(|_| {})),
+    )?;
     let again = reopened.public_keys();
 
     assert_eq!(first.ed25519.as_slice(), again.ed25519.as_slice());

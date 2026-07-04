@@ -7,15 +7,10 @@ edition = "2024"
 [package.metadata]
 cargo-fuzz = true
 
-[workspace]
-
 [dependencies]
 libfuzzer-sys = "0.4"
 arbitrary = { version = "1", features = ["derive"] }
 lithium_core = { path = "..", features = ["fuzzing"] }
-
-[profile.release]
-debug = 1
 
 [[bin]]
 name = "keyfile_parse"

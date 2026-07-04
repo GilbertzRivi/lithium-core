@@ -6,7 +6,9 @@
 //!
 //! Run with: `cargo run -p lithium_core --example keyfile`
 
-use lithium_core::keys::{InsecurePlaintextMkProvider, KeyManager, KeyStoreKind};
+use lithium_core::keys::{
+    InsecurePlaintextMkProvider, KeyManager, PublicCachePolicy, RotationErrorPolicy,
+};
 
 fn main() -> lithium_core::Result<()> {
     let dir = std::env::temp_dir().join(format!("lithium_keyfile_example_{}", std::process::id()));
@@ -16,10 +18,11 @@ fn main() -> lithium_core::Result<()> {
     // under the master key held by the provider.
     let km = KeyManager::start(
         &dir,
-        KeyStoreKind::User,
         InsecurePlaintextMkProvider::new(dir.join("mk")),
+        PublicCachePolicy::RepairMissingOnly,
+        RotationErrorPolicy::Callback(Box::new(|_| {})),
     )?;
-    let first = km.public_keys().clone();
+    let first = km.public_keys();
 
     // Release the exclusive store lock before reopening (one instance per store).
     drop(km);
@@ -27,8 +30,9 @@ fn main() -> lithium_core::Result<()> {
     // A fresh KeyManager over the same directory loads the identity back unchanged.
     let reopened = KeyManager::start(
         &dir,
-        KeyStoreKind::User,
         InsecurePlaintextMkProvider::new(dir.join("mk")),
+        PublicCachePolicy::RepairMissingOnly,
+        RotationErrorPolicy::Callback(Box::new(|_| {})),
     )?;
     let again = reopened.public_keys();
 

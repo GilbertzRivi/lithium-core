@@ -36,7 +36,7 @@ fn derive_ecdh_key(
     let shared = my_secret.diffie_hellman(&peer_pub);
 
     if !shared.was_contributory() {
-        return Err(LithiumError::invalid_public_key("x25519_low_order"));
+        return Err(LithiumError::invalid_public_key("x25519", "low_order"));
     }
 
     let shared_secret = SecByte32::new(shared.to_bytes());
@@ -73,7 +73,7 @@ fn derive_base_key(
 
 fn encapsulate_kem(peer_kyber_pub: &[u8]) -> Result<(SecByte32, [u8; 32], PublicBytes)> {
     let pk = EncapsulationKey1024::new_from_slice(peer_kyber_pub)
-        .map_err(|_| LithiumError::invalid_public_key("mlkem_encapsulation_key"))?;
+        .map_err(|_| LithiumError::invalid_public_key("kyber-mlkem1024", "encapsulation_key"))?;
 
     let (ct_kem, ss) = pk.encapsulate();
 

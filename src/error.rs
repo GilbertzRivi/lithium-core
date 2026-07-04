@@ -116,8 +116,8 @@ impl LithiumError {
     }
 
     #[inline]
-    pub fn invalid_public_key(reason: &'static str) -> Self {
-        Self::new(ErrorKind::InvalidPublicKey { reason })
+    pub fn invalid_public_key(key: &'static str, reason: &'static str) -> Self {
+        Self::new(ErrorKind::InvalidPublicKey { key, reason })
     }
 
     #[inline]
@@ -265,6 +265,7 @@ pub enum ErrorKind {
     KdfFailed,
     KemInvalidCiphertext,
     InvalidPublicKey {
+        key: &'static str,
         reason: &'static str,
     },
     KeyImportFailed {
@@ -330,7 +331,9 @@ impl fmt::Display for ErrorKind {
             ErrorKind::AeadFailed => write!(f, "aead operation failed"),
             ErrorKind::KdfFailed => write!(f, "key derivation failed"),
             ErrorKind::KemInvalidCiphertext => write!(f, "invalid kem ciphertext"),
-            ErrorKind::InvalidPublicKey { reason } => write!(f, "invalid public key: {reason}"),
+            ErrorKind::InvalidPublicKey { key, reason } => {
+                write!(f, "invalid public key [{key}]: {reason}")
+            }
             ErrorKind::KeyImportFailed { reason } => write!(f, "key import failed: {reason}"),
             ErrorKind::InvalidContext { reason } => write!(f, "invalid context: {reason}"),
             ErrorKind::RandomFailed => write!(f, "random number generation failed"),

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 use lithium_core::crypto::{keys, sign};
-use lithium_core::keys::{KeyManager, KeyStoreKind};
+use lithium_core::keys::{KeyManager, PublicCachePolicy, RotationErrorPolicy};
 
 mod common;
 use common::FileMk;
@@ -17,10 +17,11 @@ fn arena_backed_signing_keys_sign_and_verify() {
     std::fs::remove_dir_all(&dir).ok();
     let km = KeyManager::start(
         &dir,
-        KeyStoreKind::Server,
         FileMk {
             path: dir.join("mk"),
         },
+        PublicCachePolicy::RepairMissingOnly,
+        RotationErrorPolicy::Callback(Box::new(|_| {})),
     )
     .unwrap();
 
@@ -48,10 +49,11 @@ fn arena_backed_x25519_kyber_load_is_correct() {
     std::fs::remove_dir_all(&dir).ok();
     let km = KeyManager::start(
         &dir,
-        KeyStoreKind::Server,
         FileMk {
             path: dir.join("mk"),
         },
+        PublicCachePolicy::RepairMissingOnly,
+        RotationErrorPolicy::Callback(Box::new(|_| {})),
     )
     .unwrap();
 
