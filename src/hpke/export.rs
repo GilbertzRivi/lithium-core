@@ -8,14 +8,6 @@ use crate::{
     secrets::SecretBytes,
 };
 
-fn export_label(ctx: &str, exporter_context: &[u8]) -> SecretBytes {
-    let mut info = Vec::new();
-    info.extend_from_slice(ctx.as_bytes());
-    info.extend_from_slice(b"/export\0");
-    info.extend_from_slice(exporter_context);
-    SecretBytes::new(info)
-}
-
 pub fn export_secret(
     ctx: &Context,
     hpke_ctx: &HpkeContext,
@@ -23,11 +15,7 @@ pub fn export_secret(
     len: usize,
 ) -> Result<SecretBytes> {
     let input = SecretBytes::from_slice(hpke_ctx.exporter_secret.as_slice());
+    let label = ctx.add("hpke")?.add("export")?.bind_aad(exporter_context);
 
-    kdf::derive_bytes(
-        &input,
-        None,
-        export_label(ctx.as_str(), exporter_context).expose_as_slice(),
-        len,
-    )
+    kdf::derive_bytes(&input, None, label.as_slice(), len)
 }

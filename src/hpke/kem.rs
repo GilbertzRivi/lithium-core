@@ -16,8 +16,9 @@ pub fn kem_encap(
 ) -> Result<(SecByte32, HpkeEnc)> {
     let (eph_x_priv, eph_x_pub) = keys::random_x25519_keypair()?;
 
+    let kem_ctx = ctx.add("hpke")?.add("kem")?;
     let (shared_secret, kem_ct) =
-        prep_base_key_for_encryption(ctx, &eph_x_priv, recipient_x_pub, recipient_k_pub)?;
+        prep_base_key_for_encryption(&kem_ctx, &eph_x_priv, recipient_x_pub, recipient_k_pub)?;
 
     Ok((
         shared_secret,
@@ -34,8 +35,9 @@ pub fn kem_decap(
     recipient_k_priv: &SecretBytes,
     enc: &HpkeEnc,
 ) -> Result<SecByte32> {
+    let kem_ctx = ctx.add("hpke")?.add("kem")?;
     prep_base_key_for_decryption(
-        ctx,
+        &kem_ctx,
         recipient_x_priv,
         &enc.x_pub,
         recipient_k_priv,

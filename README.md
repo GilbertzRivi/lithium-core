@@ -40,8 +40,7 @@ construction and its rationale, and [`docs/kyberbox.md`](docs/kyberbox.md) for t
 ## Helpers
 
 Secondary, deployment-agnostic building blocks layered on the pillars: `opaque` (OPAQUE PAKE +
-export-key DEK wrapping), `pow` (proof-of-work), `passwords` (policy + DEK generation),
-`utils::store` (TTL secret store).
+export-key DEK wrapping), `passwords` (policy + DEK generation), `utils::store` (TTL secret store).
 
 ## Examples
 
@@ -91,7 +90,7 @@ assert_eq!(plain.expose_as_slice(), body.expose_as_slice());
 questions for an auditor are documented under [`docs/`](docs/index.md): `combiner.md`, `kyberbox.md`,
 `threat-model.md`. The public API is intended to be frozen at `0.1` through the audit.
 
-The library deliberately does not provide the whole messenger security model. In particular, the
+The library deliberately does not provide a whole application security model. In particular, the
 caller is responsible for authentic recipient public keys, unique domain-separation labels, replay
 protection, transport security, and deciding when to call key rotation.
 

@@ -40,11 +40,16 @@ impl<'a> Context<'a> {
         Ok(Context(Cow::Owned(joined)))
     }
 
-    pub(crate) fn as_str(&self) -> &str {
-        &self.0
-    }
-
     pub(crate) fn label(&self) -> PublicBytes {
         PublicBytes::from_slice(format!("{}/{}", self.0, VERSION).as_bytes())
+    }
+
+    pub(crate) fn bind_aad(&self, aad: &[u8]) -> PublicBytes {
+        let mut out = self.label().as_slice().to_vec();
+        if !aad.is_empty() {
+            out.push(0);
+            out.extend_from_slice(aad);
+        }
+        PublicBytes::from_slice(&out)
     }
 }

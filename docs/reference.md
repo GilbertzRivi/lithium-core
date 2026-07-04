@@ -3,25 +3,19 @@
 The shared library of cryptography, secret types, and key 
 management for the Lithium project.
 
-Lithium is a messenger designed for environments where the server, 
-the operator, and the infrastructure may be completely untrusted. 
-The goal isn't convenience, it's to mathematically limit what even 
-the operator can reveal. `lithium_core` implements all the 
-cryptographic foundations of that model.
+`lithium_core` targets environments where the server, the 
+operator, and the infrastructure may be completely untrusted. The 
+goal isn't convenience, it's to mathematically limit what even the 
+operator can reveal; the crate implements the cryptographic 
+foundations of that model.
 
 ## Place in the architecture
 
-```
-lithiumg (GUI)
-  | IPC
-lithiumd (daemon)      uses lithium_core
-  | HTTPS
-lithiums (server)      uses lithium_core
-```
-
-`lithium_core` is a shared dependency of `lithiumd` and 
-`lithiums`. It holds everything that isn't specific to one layer: 
-the cryptography, the secret types, and key management.
+`lithium_core` is a standalone dependency: a consuming application 
+links it and builds its transport, session, and UI layers on top. 
+The crate holds everything that isn't specific to one layer, the 
+cryptography, the secret types, and key management, and knows 
+nothing about the application above it.
 
 ## Modules
 
@@ -82,8 +76,9 @@ wire data, so it is returned as `PublicBytes` (and consumed as
 [version: u8 = 1][nonce: 12 bytes][ciphertext + tag: N bytes]
 ```
 
-AAD is always required, a wrong or empty AAD causes a decryption 
-failure.
+The `aad` at `decrypt` must byte-for-byte match the one used at 
+`encrypt`; a mismatch fails authentication. An empty `aad` is 
+valid, as long as both sides use the same value.
 
 #### `crypto::kdf`: key derivation
 

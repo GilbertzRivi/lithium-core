@@ -1,8 +1,7 @@
 # KyberBox: security analysis
 
 This document covers the KyberBox construction in 
-`lithium_core/src/crypto/kyberbox.rs` and its use in 
-`lithiumd/src/e2e/session.rs`: the goal, the key flow, the 
+`lithium_core/src/crypto/kyberbox.rs`: the goal, the key flow, the 
 properties, the responsibility boundary, and the risks for an 
 audit.
 
@@ -43,19 +42,19 @@ decapsulation key is rebuilt on use.
 The caller provides:
 
 - `priv_x`: sender's ephemeral X25519 private key (fresh per 
-  message in `session.rs`)
+  message)
 - `peer_pub_x`: recipient's X25519 public key (their reply/ratchet 
   key)
 - `peer_k_pub`: recipient's ML-KEM-1024 public key
 - `data`: the plaintext
 - `ctx`: a `crypto::Context` for domain separation, built from segments
-  (`Context::base("lithiumd")?.add("e2e-msg")?` in practice; the `/v1`
+  (e.g. `Context::base("myapp")?.add("message")?`; the `/v1`
   suffix is added by the library)
 - `aad`: optional caller-supplied AAD (`&[u8]`, may be empty) for
   binding the ciphertext to an external header/transcript
 
 ```
-msg_x_priv (32B) <-- CSRNG  -->  msg_x_pub (ct_T, sent as from_x_pub in WireV1)
+msg_x_priv (32B) <-- CSRNG  -->  msg_x_pub (ct_T, the sender's ephemeral X25519 public key)
 
 Step 1: ECDH
   ecdh_ss  = X25519(msg_x_priv, peer_pub_x)
@@ -135,23 +134,22 @@ The caller has to uphold these.
 **Recipient public keys are authentic.** KyberBox does not check 
 that `peer_pub_x` or `peer_k_pub` belong to the intended 
 recipient. Substituted keys encrypt the message for the wrong 
-party. In `session.rs` the keys come from stored contact state; 
-the invite/handshake layer owns their authenticity.
+party. The keys come from the caller's stored peer state; the 
+invite/handshake layer owns their authenticity.
 
 **The context string is unique to this use.** Domain separation 
 through `ctx` only works when different uses pick different values. 
-The only caller today is `session.rs` with `"lithiumd/e2e-msg/v1"`. 
-Reusing the same `ctx` in another context would open cross-protocol 
-attacks.
+Reusing the same `ctx` across unrelated protocols would open 
+cross-protocol attacks.
 
-**The caller passes `from_x_pub` into decrypt correctly.** 
-`decrypt_with_privs` in `session.rs` reads `from_x_pub` from the 
-wire frame and passes it as `peer_pub_x`. That value is `ct_T`, 
-bound into the `base_key` `info`. Changing it in transit changes 
-both the ECDH secret and the bound transcript, and the AEAD fails. 
-Attribution to a specific sender stays the caller's job (the 
-external signature in `session.rs`). KyberBox binds the key it was 
-given; it does not check whose key it is.
+**The caller passes the sender's ephemeral public key into decrypt 
+correctly.** The caller reads `ct_T` (the sender's ephemeral X25519 
+public key) from its own wire frame and passes it as `peer_pub_x`. 
+That value is bound into the `base_key` `info`. Changing it in 
+transit changes both the ECDH secret and the bound transcript, and 
+the AEAD fails. Attribution to a specific sender stays the caller's 
+job. KyberBox binds the key it was given; it does not check whose 
+key it is.
 
 **The CSRNG is not compromised.** The ephemeral X25519 key, the 
 ML-KEM encapsulation randomness, and all AEAD nonces come from 
@@ -162,11 +160,11 @@ fresh-key-per-message property.
 
 **Sender authentication.** Nothing in KyberBox ties the ciphertext 
 to a sender. Anyone who knows `peer_k_pub` and `peer_pub_x` (or 
-intercepts `from_x_pub` in transit) can produce a valid 
-`WirePayload`. 
+intercepts `ct_T` in transit) can produce a valid 
+`KyberBoxSealed`. 
 
 **Replay protection (at the KyberBox level).** A recorded 
-`WirePayload` resent to the same recipient still passes AEAD. 
+`KyberBoxSealed` resent to the same recipient still passes AEAD. 
 KyberBox binds no counter or state.
 
 **Binding through `base_key`.** `enc_data` and `kem_ct` are 

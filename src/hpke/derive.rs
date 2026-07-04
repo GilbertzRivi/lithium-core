@@ -13,22 +13,11 @@ use crate::{
     secrets::SecretBytes,
 };
 
-fn derive_label(ctx: &str, part: &[u8]) -> SecretBytes {
-    let mut info = Vec::new();
-    info.extend_from_slice(ctx.as_bytes());
-    info.extend_from_slice(b"/derive-keypair/");
-    info.extend_from_slice(part);
-    SecretBytes::new(info)
-}
-
 pub fn derive_keypair(ctx: &Context, ikm: &[u8]) -> Result<(HpkePrivateKey, HpkePublicKey)> {
     let input = SecretBytes::from_slice(ikm);
+    let kp = ctx.add("hpke")?.add("derive-keypair")?;
 
-    let x_priv = kdf::derive32(
-        &input,
-        None,
-        derive_label(ctx.as_str(), b"x25519-priv").expose_as_slice(),
-    )?;
+    let x_priv = kdf::derive32(&input, None, kp.add("x25519-priv")?.label().as_slice())?;
 
     let x_pub =
         PubByte32::new(*XPublicKey::from(&XStaticSecret::from(*x_priv.as_array())).as_bytes());
@@ -36,7 +25,7 @@ pub fn derive_keypair(ctx: &Context, ikm: &[u8]) -> Result<(HpkePrivateKey, Hpke
     let k_seed_bytes = kdf::derive_bytes(
         &input,
         None,
-        derive_label(ctx.as_str(), b"mlkem1024-seed").expose_as_slice(),
+        kp.add("mlkem1024-seed")?.label().as_slice(),
         64,
     )?;
 

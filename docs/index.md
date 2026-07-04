@@ -2,14 +2,13 @@
 
 This is the entry point for auditing `lithium_core` as a 
 standalone cryptography and key-management library, and the 
-reading order for the grant review. The library is the subject; 
-the wider Lithium messenger is only context that shows it isn't 
-built in a vacuum.
+reading order for the grant review. The library is the subject, 
+reviewed on its own terms.
 
 ## Scope
 
-The subject is the `lithium_core` library, not the whole 
-messenger. The boundary is set by 
+The subject is the `lithium_core` library, not the application 
+that consumes it. The boundary is set by 
 [`threat-model.md`](threat-model.md): what the library guarantees 
 and what is the caller's job (authenticity of the recipient's 
 public keys, unique domain-separation labels, replay protection, 
@@ -18,14 +17,12 @@ its correctness is the main finding.
 
 **In scope:** the two pillars of `lithium_core`, key management at 
 rest (`keys`, `secrets`, `public`) and hybrid encryption (`crypto`, 
-`hpke`), plus the helpers (`opaque`, `pow`, `passwords`, 
-`utils::store`).
+`hpke`), plus the helpers (`opaque`, `passwords`, `utils::store`).
 
-**Out of scope:** the application layers, `lithiumd` (IPC, E2E 
-session), `lithiums` (relay, REST transport, rate limiting), 
-`lithiumg` (GUI). The library is consumed by them; they describe 
-the usage contract the messenger follows and the library assumes, 
-but they are not the target of the audit.
+**Out of scope:** the application layers that consume the library 
+(IPC/session, relay, REST transport, rate limiting, GUI). The 
+library is consumed by them; they set the usage contract the 
+library assumes, but they are not the target of the audit.
 
 ## Reading order
 
@@ -54,19 +51,17 @@ separation are implemented faithfully.
 ## Reproducibility and coverage
 
 - Dependencies are pinned in `Cargo.lock`; the toolchain is pinned 
-  in `rust-toolchain.toml` (`1.96.0`). The full bit-for-bit 
-  reproducibility of the messenger client binary is documented in 
-  the main Lithium repo.
+  in `rust-toolchain.toml` (`1.96.0`).
 - Known-answer vectors (KAT): `tests/golden_tests.rs` (6 tests) on 
   data in `tests/testdata/` (`kyberbox_golden_v1`, 
   `mldsa87_verify_golden_v1`, `hpke_golden_v1`).
 - Public API tests: `crypto_tests` (87), `hpke_tests` (37), 
   `secret_tests` (66), `password_tests` (21), `store_tests` (14).
-- Fuzzing: 12 `cargo-fuzz` targets on the surfaces that parse 
+- Fuzzing: 11 `cargo-fuzz` targets on the surfaces that parse 
   untrusted input (`keyfile_parse`, `secret_json`, `opaque_parse`, 
-  `kyberbox_decrypt`, `aead_decrypt`, `sign_verify`, `pow_verify`, 
-  `hpke_open`, `hpke_setup_receiver`, `hpke_wire`, `hpke_stream`, 
-  `double_sig`). `fuzz/smoke.sh` runs every target in parallel for a 
+  `kyberbox_decrypt`, `aead_decrypt`, `sign_verify`, `hpke_open`, 
+  `hpke_setup_receiver`, `hpke_wire`, `hpke_stream`, `double_sig`). 
+  `fuzz/smoke.sh` runs every target in parallel for a 
   fixed wall-clock budget (a quick regression sweep, not a deep 
   campaign):
 

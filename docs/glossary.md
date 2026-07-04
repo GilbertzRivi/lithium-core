@@ -66,7 +66,3 @@ the dual signature.
 
 **ML-KEM-1024** (Kyber) - post-quantum KEM; part of the encryption 
 hybrid.
-
-**PoW (proof-of-work)** - the `pow` helper: SHA-256 with a 
-required number of leading zero bits, used by the caller as 
-anti-spam.

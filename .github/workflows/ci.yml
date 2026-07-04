@@ -39,11 +39,36 @@ jobs:
       - run: cargo clippy --all-targets --all-features -- -D warnings
 
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --all-features
+
+  # Build-only check for the mobile targets the threat model documents
+  # (arena memory-locking behavior). `cargo check` does not link, so Android
+  # cross-compiles from Linux; iOS needs the Apple SDK, so it runs on macOS.
+  cross:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: aarch64-linux-android
+          - os: macos-latest
+            target: aarch64-apple-ios
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - run: rustup target add ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - run: cargo check --all-features --target ${{ matrix.target }}
 
   doc:
     runs-on: ubuntu-latest

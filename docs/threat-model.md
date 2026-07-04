@@ -3,16 +3,16 @@
 The scope here is the `lithium_core` crate alone, as a
 cryptography and at-rest key-management library, not the
 application around it. The boundary matters for the audit: we
-audit the tight surface of the library, not the messenger that
+audit the tight surface of the library, not the application that
 uses it.
 
 ## Scope
 
 In scope: the two pillars (`keys`/`secrets`, `crypto`) and the
-helpers (`opaque`, `pow`, `passwords`, `utils::store`). Out of
-scope (the application layers in `lithiumd`/`lithiums`/`lithiumg`):
-the network, the relay server, REST transport, handshake/invite,
-IPC, the cover-traffic policy, the unlock UX.
+helpers (`opaque`, `passwords`, `utils::store`). Out of scope (the
+application layers that consume the library): the network, the
+relay server, REST transport, handshake/invite, IPC, the
+cover-traffic policy, the unlock UX.
 
 ## What the library guarantees (when the assumptions below hold)
 
@@ -42,10 +42,10 @@ the caller upholding:
 - **Authenticity of the recipient's public keys.** KyberBox does
   not verify that `peer_pub_x` or `peer_k_pub` belong to the
   intended recipient. Substituting the keys encrypts for the wrong
-  party. Binding identity is the messenger's invite/handshake
-  layer, not the library.
+  party. Binding identity is the consuming application's
+  invite/handshake layer, not the library.
 - **Domain-separation labels.** Context roots and all other labels
-  (OPAQUE/POW/DEK labels) are supplied by the caller. They must be
+  (OPAQUE/DEK labels) are supplied by the caller. They must be
   unique per use and consistent between sides. The library checks
   `crypto::Context` syntax and length, but it cannot know whether a
   chosen label is semantically right for the protocol.
@@ -54,9 +54,9 @@ the caller upholding:
   most 255 bytes before the version suffix. Invalid contexts fail as
   `InvalidContext`; they are not normalized or repaired.
 - **No replay protection at the crypto level.** KyberBox does not
-  bind the ciphertext to a counter or state; replay detection is
-  in the messenger's session/storage layer (a window on `step` +
-  `msg_id` dedup), see [`kyberbox.md`](kyberbox.md).
+  bind the ciphertext to a counter or state; replay detection
+  belongs to the consuming application's session/storage layer,
+  see [`kyberbox.md`](kyberbox.md).
 - **No transport security.** TLS / anti-MITM at the network level
   is the server/proxy layer.
 - **Randomness quality.** The constructions rely on the system
@@ -118,8 +118,9 @@ seal or open a KyberBox message without passing `&Context`.
 ## Forward secrecy / post-compromise
 
 The library provides the primitives (fresh `ss_kem` per message,
-rotating RX keys). The actual FS/PCS guarantees of the
-E2E layer.
+rotating recipient keys). The actual forward-secrecy /
+post-compromise guarantees are the consuming application's session
+layer's responsibility; KyberBox on its own does not provide them.
 
 ## In-memory secret protection
 

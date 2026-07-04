@@ -177,16 +177,6 @@ pub(crate) fn prep_base_key_for_decryption(
     Ok(base_key)
 }
 
-// The 0x00 matters so you can’t bypass / can’t confuse / cannot impersonate another context.
-fn data_aad(ctx: &Context, aad: &[u8]) -> Result<Vec<u8>> {
-    let mut framed = ctx.add("data")?.label().as_slice().to_vec();
-    if !aad.is_empty() {
-        framed.push(0);
-        framed.extend_from_slice(aad);
-    }
-    Ok(framed)
-}
-
 pub fn seal(
     ctx: &Context,
     priv_x: &SecByte32,
@@ -197,7 +187,12 @@ pub fn seal(
 ) -> Result<KyberBoxSealed> {
     let (base_key, kem_ct) = prep_base_key_for_encryption(ctx, priv_x, peer_pub_x, peer_k_pub)?;
     let nonce = keys::random_12()?;
-    let ciphertext = aead::encrypt(data, &base_key, &nonce, &data_aad(ctx, aad)?)?;
+    let ciphertext = aead::encrypt(
+        data,
+        &base_key,
+        &nonce,
+        ctx.add("data")?.bind_aad(aad).as_slice(),
+    )?;
 
     Ok(KyberBoxSealed { ciphertext, kem_ct })
 }
@@ -220,7 +215,7 @@ pub fn open(
     let plaintext = aead::decrypt(
         &kyber_box_sealed.ciphertext,
         &base_key,
-        &data_aad(ctx, aad)?,
+        ctx.add("data")?.bind_aad(aad).as_slice(),
     )?;
 
     Ok(plaintext)
