@@ -22,7 +22,7 @@
 //! # Helpers
 //!
 //! Secondary, deployment-agnostic building blocks layered on the pillars: [`opaque`] (OPAQUE
-//! PAKE + export-key DEK wrapping), [`passwords`] (password policy + DEK generation),
+//! PAKE + export-key DEK wrapping), [`passwords`] (DEK generation),
 //! [`utils::store`] (TTL secret store), [`error`].
 //!
 //! # Security status
@@ -45,7 +45,7 @@ pub mod hpke;
 pub mod keys;
 /// Helper: OPAQUE PAKE and export-key DEK wrapping for password-authenticated key retrieval.
 pub mod opaque;
-/// Helper: password policy validation and data-encryption-key generation.
+/// Helper: data-encryption-key generation.
 pub mod passwords;
 /// Public key material: non-secret byte types parallel to secrets.
 pub mod public;

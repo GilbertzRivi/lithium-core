@@ -40,7 +40,7 @@ construction and its rationale, and [`docs/kyberbox.md`](docs/kyberbox.md) for t
 ## Helpers
 
 Secondary, deployment-agnostic building blocks layered on the pillars: `opaque` (OPAQUE PAKE +
-export-key DEK wrapping), `passwords` (policy + DEK generation), `utils::store` (TTL secret store).
+export-key DEK wrapping), `passwords` (DEK generation), `utils::store` (TTL secret store).
 
 ## Examples
 

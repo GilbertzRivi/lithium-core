@@ -60,6 +60,14 @@ fn create_private_tmp(path: &Path) -> Result<(fs::File, PathBuf)> {
     )))
 }
 
+/// Atomically writes `data` via a private tmp file + `rename`, with `fsync` on
+/// the file (and, on Unix, the parent directory).
+///
+/// Unix: the tmp file is created `0o600`, so the keyfile is owner-only from
+/// creation. Windows: no DACL is set, the file inherits the parent directory's
+/// ACL. Keep the store under a per-user profile directory (owner-only by
+/// default) or protect the master key with a sealing `MkProvider`; the
+/// built-in plaintext provider is dev-only regardless.
 pub fn write_secure(path: &Path, data: &[u8]) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(LithiumError::io)?;

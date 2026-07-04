@@ -154,6 +154,11 @@ impl LithiumError {
     }
 
     #[inline]
+    pub fn malformed_input(reason: &'static str) -> Self {
+        Self::new(ErrorKind::MalformedInput { reason })
+    }
+
+    #[inline]
     pub fn keystore_locked() -> Self {
         Self::new(ErrorKind::KeystoreLocked)
     }
@@ -276,6 +281,9 @@ pub enum ErrorKind {
         msg: &'static str,
     },
     MalformedKeyfile,
+    MalformedInput {
+        reason: &'static str,
+    },
     KeystoreLocked,
     EnvMissing {
         name: &'static str,
@@ -329,6 +337,7 @@ impl fmt::Display for ErrorKind {
             ErrorKind::InvalidCredentials { msg } => write!(f, "invalid credentials: {msg}"),
             ErrorKind::InvalidPermissions { msg } => write!(f, "permission denied: {msg}"),
             ErrorKind::MalformedKeyfile => write!(f, "malformed keyfile"),
+            ErrorKind::MalformedInput { reason } => write!(f, "malformed input: {reason}"),
             ErrorKind::KeystoreLocked => {
                 write!(f, "keystore already locked by another instance")
             }

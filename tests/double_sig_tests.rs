@@ -144,3 +144,104 @@ fn from_hex_enforces_lowercase_no_prefix() {
     assert!(DoubleSig::from_hex(&hexed.to_uppercase()).is_err());
     assert!(DoubleSig::from_hex(&format!("0x{hexed}")).is_err());
 }
+
+const ED_LEN: usize = 64;
+const DILI_LEN: usize = 4627;
+
+#[test]
+fn from_bytes_length_boundaries() {
+    for short in [0usize, 1, 63, 64] {
+        assert!(
+            matches!(
+                DoubleSig::from_bytes(&vec![0u8; short]).unwrap_err().kind,
+                ErrorKind::InvalidLength { .. }
+            ),
+            "{short} bytes has no dilithium branch"
+        );
+    }
+    assert!(
+        DoubleSig::from_bytes(&[0u8; ED_LEN + 1]).is_ok(),
+        "65 bytes is the minimum valid length"
+    );
+}
+
+#[test]
+fn from_bytes_roundtrips_arbitrary_tail() {
+    let bytes: Vec<u8> = (0..ED_LEN + 1234)
+        .map(|i| (i as u8).wrapping_mul(31))
+        .collect();
+    let sig = DoubleSig::from_bytes(&bytes).unwrap();
+    assert_eq!(sig.to_bytes(), bytes);
+}
+
+#[test]
+fn verify_double_truncated_signature_is_false() {
+    let k = fresh_keys();
+    let msg = b"payload";
+    let full = sign(&k, msg).to_bytes();
+    for cut in [1usize, 100, 2000, full.len() - (ED_LEN + 1)] {
+        let sig = DoubleSig::from_bytes(&full[..full.len() - cut]).unwrap();
+        assert!(
+            !sign::verify_double(msg, &sig, &k.ed_pub, &k.dili_pub),
+            "truncated signature must not verify (cut {cut})"
+        );
+    }
+}
+
+#[test]
+fn verify_double_oversized_signature_is_false() {
+    let k = fresh_keys();
+    let msg = b"payload";
+    for extra in [1usize, 100, DILI_LEN] {
+        let mut bytes = sign(&k, msg).to_bytes();
+        bytes.resize(bytes.len() + extra, 0xAB);
+        let sig = DoubleSig::from_bytes(&bytes).unwrap();
+        assert!(
+            !sign::verify_double(msg, &sig, &k.ed_pub, &k.dili_pub),
+            "oversized signature must not verify (extra {extra})"
+        );
+    }
+}
+
+#[test]
+fn verify_double_random_full_length_is_false() {
+    let k = fresh_keys();
+    let bytes: Vec<u8> = (0..ED_LEN + DILI_LEN)
+        .map(|i| (i as u8).wrapping_mul(37).wrapping_add(11))
+        .collect();
+    let sig = DoubleSig::from_bytes(&bytes).unwrap();
+    assert!(!sign::verify_double(
+        b"payload",
+        &sig,
+        &k.ed_pub,
+        &k.dili_pub
+    ));
+}
+
+#[test]
+fn verify_double_valid_ed_garbage_dili_is_false() {
+    let k = fresh_keys();
+    let msg = b"payload";
+    let mut bytes = sign(&k, msg).to_bytes();
+    for b in bytes[ED_LEN..].iter_mut() {
+        *b ^= 0xFF;
+    }
+    let sig = DoubleSig::from_bytes(&bytes).unwrap();
+    assert!(
+        !sign::verify_double(msg, &sig, &k.ed_pub, &k.dili_pub),
+        "a valid ed branch must not rescue a broken dili branch"
+    );
+}
+
+#[test]
+fn verify_double_off_by_one_dili_length_no_panic() {
+    let k = fresh_keys();
+    let msg = b"payload";
+    let valid = sign(&k, msg).to_bytes();
+    for len in [ED_LEN + DILI_LEN - 1, ED_LEN + DILI_LEN + 1] {
+        let mut bytes = valid.clone();
+        bytes.resize(len, 0x00);
+        let sig = DoubleSig::from_bytes(&bytes).unwrap();
+        assert!(!sign::verify_double(msg, &sig, &k.ed_pub, &k.dili_pub));
+    }
+}

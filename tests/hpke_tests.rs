@@ -63,8 +63,6 @@ fn enc_flip(enc: &HpkeEnc, idx: usize) -> HpkeEnc {
     HpkeEnc::from_wire(&w).unwrap()
 }
 
-// ---- roundtrip / happy path ----
-
 #[test]
 fn seal_open_roundtrip() {
     let (sk, pk) = kp(CTX, b"seed-a");
@@ -102,8 +100,6 @@ fn derive_keypair_empty_ikm_is_ok_and_deterministic() {
     assert_eq!(pk1.to_wire(), pk2.to_wire());
 }
 
-// ---- domain separation ----
-
 #[test]
 fn derive_keypair_diff_ikm_diff_keys() {
     let (_, a) = kp(CTX, b"ikm-1");
@@ -117,8 +113,6 @@ fn derive_keypair_diff_ctx_diff_keys() {
     let (_, b) = kp("ctx-2", b"same");
     assert_ne!(a.to_wire(), b.to_wire());
 }
-
-// ---- authenticated negatives: open must fail ----
 
 #[test]
 fn open_wrong_ctx_fails() {
@@ -224,8 +218,6 @@ fn seal_is_randomized() {
     assert_ne!(a.ciphertext.as_slice(), b.ciphertext.as_slice());
 }
 
-// ---- unauthenticated export: mismatch => different secret, not an error ----
-
 #[test]
 fn export_wrong_ctx_disagrees() {
     let (sk, pk) = kp(CTX, b"s");
@@ -294,8 +286,6 @@ fn export_shorter_len_is_prefix_of_longer() {
     assert_eq!(&long.expose_as_slice()[..32], short.expose_as_slice());
 }
 
-// ---- annoying / edge inputs ----
-
 #[test]
 fn seal_open_empty_plaintext() {
     let (sk, pk) = kp(CTX, b"s");
@@ -349,8 +339,6 @@ fn info_with_null_bytes_still_separates() {
         b"m"
     );
 }
-
-// ---- wire format: to_wire / from_wire ----
 
 #[test]
 fn enc_wire_roundtrip() {
@@ -421,4 +409,112 @@ fn full_wire_interop_seal_open() {
     let sk = HpkePrivateKey::from_wire(sk.to_wire().expose_as_slice()).unwrap();
     let pt = open(&sk, CTX, INFO, AAD, &sealed).unwrap();
     assert_eq!(pt.expose_as_slice(), b"wire");
+}
+
+#[test]
+fn open_prefix_like_ctx_fails() {
+    let (sk, pk) = kp("app", b"s");
+    let sealed = seal(&pk, "app", INFO, AAD, b"m");
+
+    assert!(open(&sk, "app", INFO, AAD, &sealed).is_ok());
+    assert!(
+        open(&sk, "app/x", INFO, AAD, &sealed).is_err(),
+        "an extra segment must not open the parent context"
+    );
+    assert!(
+        open(&sk, "apple", INFO, AAD, &sealed).is_err(),
+        "a string-prefix context must not collide"
+    );
+}
+
+#[test]
+fn caller_cannot_forge_internal_hpke_namespace() {
+    let (_, plain) = kp("app", b"s");
+    let (_, mirror) = kp("app/hpke/kem", b"s");
+    assert_ne!(
+        plain.to_wire(),
+        mirror.to_wire(),
+        "caller ctx mirroring the internal /hpke/kem path must stay a distinct domain"
+    );
+
+    let (sk, pk) = kp("app", b"s");
+    let sealed = seal(&pk, "app", INFO, AAD, b"m");
+    assert!(open(&sk, "app/hpke/kem", INFO, AAD, &sealed).is_err());
+    assert!(open(&sk, "app/hpke/schedule", INFO, AAD, &sealed).is_err());
+}
+
+#[test]
+fn open_ctx_segment_cannot_move_into_info() {
+    let (sk, pk) = kp("app", b"s");
+    let sealed = seal(&pk, "app/mail", b"", AAD, b"m");
+    assert!(
+        open(&sk, "app", b"mail", AAD, &sealed).is_err(),
+        "a ctx segment and info live in separate namespaces"
+    );
+}
+
+#[test]
+fn open_empty_vs_null_info_disagree() {
+    let (sk, pk) = kp(CTX, b"s");
+
+    let empty_info = seal(&pk, CTX, b"", AAD, b"m");
+    assert!(
+        open(&sk, CTX, b"\0", AAD, &empty_info).is_err(),
+        "a bare NUL info must not collide with empty info"
+    );
+
+    let null_info = seal(&pk, CTX, b"\0", AAD, b"m");
+    assert!(open(&sk, CTX, b"", AAD, &null_info).is_err());
+}
+
+#[test]
+fn open_info_aad_swap_fails() {
+    let (sk, pk) = kp(CTX, b"s");
+    let sealed = seal(&pk, CTX, b"role-x", b"role-y", b"m");
+    assert!(
+        open(&sk, CTX, b"role-y", b"role-x", &sealed).is_err(),
+        "info and aad are not interchangeable"
+    );
+}
+
+#[test]
+fn export_exporter_context_null_roundtrip_and_separates() {
+    let (sk, pk) = kp(CTX, b"s");
+    let (enc, sent) = hpke::setup_sender_and_export(&ctx_of(CTX), &pk, INFO, b"a\0b", 32).unwrap();
+
+    let same = hpke::setup_receiver_and_export(&ctx_of(CTX), &sk, &enc, INFO, b"a\0b", 32).unwrap();
+    assert_eq!(sent.expose_as_slice(), same.expose_as_slice());
+
+    let flip = hpke::setup_receiver_and_export(&ctx_of(CTX), &sk, &enc, INFO, b"a\0c", 32).unwrap();
+    assert_ne!(sent.expose_as_slice(), flip.expose_as_slice());
+
+    let shift = hpke::setup_receiver_and_export(&ctx_of(CTX), &sk, &enc, INFO, b"ab", 32).unwrap();
+    assert_ne!(
+        sent.expose_as_slice(),
+        shift.expose_as_slice(),
+        "NUL framing: a\\0b must not equal ab"
+    );
+}
+
+#[test]
+fn export_binary_exporter_context_roundtrip() {
+    let (sk, pk) = kp(CTX, b"s");
+    let exp: Vec<u8> = (0u16..=255).map(|b| b as u8).collect();
+    let (enc, sent) = hpke::setup_sender_and_export(&ctx_of(CTX), &pk, INFO, &exp, 48).unwrap();
+    let recv = hpke::setup_receiver_and_export(&ctx_of(CTX), &sk, &enc, INFO, &exp, 48).unwrap();
+    assert_eq!(sent.expose_as_slice(), recv.expose_as_slice());
+}
+
+#[test]
+fn export_info_exporter_context_swap_disagrees() {
+    let (sk, pk) = kp(CTX, b"s");
+    let (enc, sent) =
+        hpke::setup_sender_and_export(&ctx_of(CTX), &pk, b"role-x", b"role-y", 32).unwrap();
+    let recv =
+        hpke::setup_receiver_and_export(&ctx_of(CTX), &sk, &enc, b"role-y", b"role-x", 32).unwrap();
+    assert_ne!(
+        sent.expose_as_slice(),
+        recv.expose_as_slice(),
+        "info and exporter_context are bound at different stages, not interchangeable"
+    );
 }

@@ -1,117 +1,14 @@
 // SPDX-FileCopyrightText: 2026 Lithium Project
 // SPDX-License-Identifier: AGPL-3.0-only
 
-use lithium_core::error::ErrorKind;
 use lithium_core::opaque::dek::{unwrap_dek_under_export_key, wrap_dek_under_export_key};
-use lithium_core::passwords::{
-    PasswordPolicy, generate_dek, validate_password, validate_passwords_distinct,
-};
+use lithium_core::passwords::generate_dek;
 use lithium_core::secrets::{SecByte64, SecretString};
 
 const TEST_DEK_AAD: &[u8] = b"lithium-core/test/dek-wrap";
 
-fn pass(s: &str) -> SecretString {
-    SecretString::new(s.to_owned())
-}
-
-fn default_policy() -> PasswordPolicy {
-    PasswordPolicy::default()
-}
-
 fn export_key(seed: u8) -> SecByte64 {
     SecByte64::from_slice(&[seed; 64]).unwrap()
-}
-
-#[test]
-fn password_valid_default_policy() {
-    assert!(validate_password(&pass("Passw0rd!Abc"), default_policy()).is_ok());
-}
-
-#[test]
-fn password_too_short() {
-    let err = validate_password(&pass("Ab1!"), default_policy()).unwrap_err();
-    assert_eq!(err.kind, ErrorKind::StringPolicy);
-}
-
-#[test]
-fn password_too_long() {
-    let long = "Aa1!".repeat(300);
-    let err = validate_password(&pass(&long), default_policy()).unwrap_err();
-    assert_eq!(err.kind, ErrorKind::StringPolicy);
-}
-
-#[test]
-fn password_missing_lowercase() {
-    let err = validate_password(&pass("PASSW0RD!ABC"), default_policy()).unwrap_err();
-    assert_eq!(err.kind, ErrorKind::StringPolicy);
-}
-
-#[test]
-fn password_missing_uppercase() {
-    let err = validate_password(&pass("passw0rd!abc"), default_policy()).unwrap_err();
-    assert_eq!(err.kind, ErrorKind::StringPolicy);
-}
-
-#[test]
-fn password_missing_digit() {
-    let err = validate_password(&pass("Password!Abc"), default_policy()).unwrap_err();
-    assert_eq!(err.kind, ErrorKind::StringPolicy);
-}
-
-#[test]
-fn password_missing_special() {
-    let err = validate_password(&pass("Password1Abc"), default_policy()).unwrap_err();
-    assert_eq!(err.kind, ErrorKind::StringPolicy);
-}
-
-#[test]
-fn password_with_whitespace_rejected_by_default() {
-    let err = validate_password(&pass("Pass w0rd!Ab"), default_policy()).unwrap_err();
-    assert_eq!(err.kind, ErrorKind::StringPolicy);
-}
-
-#[test]
-fn password_with_whitespace_allowed_when_permitted() {
-    let mut pol = default_policy();
-    pol.allow_whitespace = true;
-    assert!(validate_password(&pass("Pass w0rd!Ab"), pol).is_ok());
-}
-
-#[test]
-fn password_custom_policy_no_special_required() {
-    let pol = PasswordPolicy {
-        require_special: false,
-        ..default_policy()
-    };
-    assert!(validate_password(&pass("Password1Abc"), pol).is_ok());
-}
-
-#[test]
-fn password_custom_policy_short_min() {
-    let pol = PasswordPolicy {
-        min_len: 4,
-        require_uppercase: false,
-        require_digit: false,
-        require_special: false,
-        ..default_policy()
-    };
-    assert!(validate_password(&pass("abcd"), pol).is_ok());
-}
-
-#[test]
-fn password_exactly_min_length() {
-    assert!(validate_password(&pass("Passw0rd!Ab2"), default_policy()).is_ok());
-}
-
-#[test]
-fn passwords_distinct_ok() {
-    assert!(validate_passwords_distinct(&pass("first"), &pass("second")).is_ok());
-}
-
-#[test]
-fn passwords_distinct_same_fails() {
-    let err = validate_passwords_distinct(&pass("same"), &pass("same")).unwrap_err();
-    assert!(matches!(err.kind, ErrorKind::InvalidCredentials { .. }));
 }
 
 #[test]

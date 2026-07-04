@@ -4,4 +4,4 @@
 #[allow(clippy::module_inception)]
 mod passwords;
 
-pub use passwords::{PasswordPolicy, generate_dek, validate_password, validate_passwords_distinct};
+pub use passwords::generate_dek;

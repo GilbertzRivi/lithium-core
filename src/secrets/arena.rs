@@ -225,9 +225,8 @@ impl Region {
 
 impl Drop for Region {
     fn drop(&mut self) {
-        if let Ok(mut guard) = self.arena.lock() {
-            guard.dealloc(self.off, self.len);
-        }
+        let mut guard = self.arena.lock().unwrap_or_else(|e| e.into_inner());
+        guard.dealloc(self.off, self.len);
     }
 }
 
@@ -640,7 +639,7 @@ mod tests {
     }
 
     #[test]
-    fn poisoned_lock_degrades_to_error_not_panic() {
+    fn poisoned_lock_degrades_to_error_and_still_zeroizes() {
         let arena = SecretArena::with_capacity(4096).unwrap();
         let live = arena.store_fixed::<32>(&[0xC3; 32]).unwrap();
 
@@ -655,7 +654,15 @@ mod tests {
             arena.random_fixed::<32>().is_err(),
             "claim on a poisoned lock must return an error"
         );
-        drop(live); // must not panic despite the poisoned lock
+
+        drop(live); // must not panic, and must zero the slot despite the poison
+
+        let guard = arena.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let slot = unsafe { slice::from_raw_parts(guard.base, 32) };
+        assert!(
+            slot.iter().all(|&b| b == 0),
+            "freed slot must be zeroized even under a poisoned lock"
+        );
     }
 
     #[test]

@@ -27,7 +27,7 @@ impl ServerSetup {
     pub fn deserialize(bytes: &[u8]) -> Result<Self> {
         Setup::deserialize(bytes)
             .map(Self)
-            .map_err(|_| LithiumError::internal("opaque_server_setup_decode"))
+            .map_err(|_| LithiumError::malformed_input("opaque_server_setup"))
     }
 }
 
@@ -69,7 +69,7 @@ pub fn server_login_start(
     server_id: &[u8],
 ) -> Result<(Vec<u8>, Vec<u8>)> {
     let record = ServerRegistration::<LithiumCipherSuite>::deserialize(record_bytes)
-        .map_err(|_| LithiumError::internal("opaque_record_decode"))?;
+        .map_err(|_| LithiumError::malformed_input("opaque_record"))?;
     let request = CredentialRequest::<LithiumCipherSuite>::deserialize(request_bytes)
         .map_err(|_| bad_message())?;
 
@@ -102,7 +102,7 @@ pub fn server_login_finish(
     server_id: &[u8],
 ) -> Result<()> {
     let state = ServerLogin::<LithiumCipherSuite>::deserialize(state_bytes)
-        .map_err(|_| LithiumError::internal("opaque_login_state_decode"))?;
+        .map_err(|_| LithiumError::malformed_input("opaque_login_state"))?;
     let finalization =
         CredentialFinalization::<LithiumCipherSuite>::deserialize(finalization_bytes)
             .map_err(|_| bad_message())?;

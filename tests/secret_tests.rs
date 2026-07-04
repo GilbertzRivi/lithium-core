@@ -1,10 +1,35 @@
 // SPDX-FileCopyrightText: 2026 Lithium Project
 // SPDX-License-Identifier: AGPL-3.0-only
 
+use std::io::Write;
+
 use lithium_core::error::ErrorKind;
 use lithium_core::secrets::{
-    SecByte12, SecByte32, SecByte64, SecretBytes, SecretJson, SecretString,
+    SecByte12, SecByte32, SecByte64, SecretBytes, SecretJson, SecretString, ZeroizingWriter,
 };
+
+#[test]
+fn zeroizing_writer_concatenates_across_growth() {
+    let mut w = ZeroizingWriter::new();
+    let mut expected = Vec::new();
+    for i in 0u16..2000 {
+        let chunk = i.to_be_bytes();
+        w.write_all(&chunk).unwrap();
+        expected.extend_from_slice(&chunk);
+    }
+    assert_eq!(w.into_secret().expose_as_slice(), expected.as_slice());
+}
+
+#[test]
+fn zeroizing_writer_matches_serde_to_vec() {
+    let value = serde_json::json!({"k_priv": "deadbeef", "n": 42, "list": [1, 2, 3]});
+    let mut w = ZeroizingWriter::new();
+    serde_json::to_writer(&mut w, &value).unwrap();
+    assert_eq!(
+        w.into_secret().expose_as_slice(),
+        serde_json::to_vec(&value).unwrap().as_slice()
+    );
+}
 
 #[test]
 fn fixed_bytes_new_and_as_slice() {

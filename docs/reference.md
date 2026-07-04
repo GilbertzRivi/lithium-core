@@ -442,7 +442,10 @@ Encryption scheme:
   a wrong type causes a decryption failure
 
 Writing through `write_secure` uses a `tmp + rename` pattern with 
-`fsync` and `0o600` permissions (Unix).
+`fsync`. On Unix the file is created `0o600` (owner-only); on 
+Windows no DACL is set and the file inherits the parent directory's 
+ACL, so keep the store under a per-user profile directory or protect 
+the MK with a sealing `MkProvider`.
 
 Rewrapping (changing the MK without decrypting the payload):
 
@@ -644,23 +647,6 @@ key-stretching function (`opaque::suite`). There is no standalone
 password-hash API: password authentication goes through the OPAQUE 
 flow below, which never exposes or stores the password.
 
-#### Password validation
-
-```rust
-pub struct PasswordPolicy {
-    pub min_len: usize,          // default: 12
-    pub max_len: usize,          // default: 1024
-    pub require_lowercase: bool, // default: true
-    pub require_uppercase: bool, // default: true
-    pub require_digit: bool,     // default: true
-    pub require_special: bool,   // default: true
-    pub allow_whitespace: bool,  // default: false
-}
-
-validate_password(password: &SecretString, pol: PasswordPolicy) -> Result<()>
-validate_passwords_distinct(a: &SecretString, b: &SecretString) -> Result<()>
-```
-
 #### DEK (Data Encryption Key)
 
 `generate_dek()` (in `passwords`) mints a random 32-byte DEK.
@@ -785,6 +771,9 @@ Selected `ErrorKind` variants:
 - `KemInvalidCiphertext`: malformed KEM ciphertext
 - `InvalidPublicKey { reason }`: unusable public key (e.g. low-order point)
 - `KeyImportFailed { reason }`: raw bytes could not be parsed into a key
+- `MalformedInput { reason }`: a caller-supplied serialized blob could not be
+  parsed (e.g. a corrupt or untrusted OPAQUE record/state/setup); distinct from
+  `Internal`, which is a library invariant break, never input-driven
 - `InvalidContext { reason }`: a `crypto::Context` segment failed
   validation (empty, contains `/`, non-graphic ASCII, or over 255 bytes)
 - `RandomFailed`: OS CSPRNG failure
@@ -865,8 +854,8 @@ mechanisms behind those guarantees:
   clear memory on `Drop`.
 - **Rotation crash-safety**: an unfinished MK rotation is finished 
   or rolled back on startup.
-- **I/O safety**: atomic `tmp + rename` writes with `fsync`, 
-  `0o600` permissions.
+- **I/O safety**: atomic `tmp + rename` writes with `fsync`; 
+  `0o600` on Unix (Windows inherits the parent directory's ACL).
 - **Opaque errors in release**: `LithiumError` reveals only the 
   category, not internal details.
 

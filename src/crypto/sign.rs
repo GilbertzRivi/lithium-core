@@ -125,6 +125,7 @@ pub fn verify_double(
     ed_pub: &PubByte32,
     dili_pub: &PublicBytes,
 ) -> bool {
-    verify_signature(message, &sig.ed, ed_pub)
-        && verify_signature_dili(message, &sig.dili, dili_pub)
+    let sig_ed = verify_signature(message, &sig.ed, ed_pub);
+    let sig_dili = verify_signature_dili(message, &sig.dili, dili_pub);
+    sig_ed && sig_dili
 }
