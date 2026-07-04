@@ -308,7 +308,7 @@ rotation, and recovers an interrupted rotation.
 **On-disk directory layout:**
 
 ```
-{base_dir}/{kind}/
+{base_dir}/KeyManager/
   pub/
     ed25519.pub
     x25519.pub
@@ -342,8 +342,17 @@ MK rotation is atomic and crash-safe. The protocol:
 6. Remove the `.rotate/` directory.
 
 On startup `KeyManager` checks for an unfinished rotation and 
-tries to finish or roll it back before loading keys. The default 
-rotation interval is **3600 seconds** (1 hour).
+tries to finish or roll it back before loading keys.
+
+Rotation is **automatic**: `start` spawns a background thread that
+rotates the MK once the interval elapses; the caller drives nothing.
+The default interval is **3600 seconds** (1 hour), adjustable with
+`set_rotate_interval`. Rotation runs under an internal write lock, so
+it is serialized against every operation that reads key material -
+concurrent `with_signing_keys`/`derive_secret32` calls never observe a
+half-rewrapped store. A rotation failure is routed through the
+`RotationErrorPolicy` given at `start` (see below), never silently
+dropped.
 
 **The `MkProvider` trait:**
 
@@ -366,27 +375,52 @@ with that feature.
 **API:**
 
 ```rust
-// Initialization
-KeyManager::start(base_dir, kind, mk_provider) -> Result<KeyManager<P>>              // fail-closed locking
-KeyManager::start_best_effort(base_dir, kind, mk_provider) -> Result<KeyManager<P>>  // opt-in unlocked fallback
+// Initialization (fail-closed locking; start_best_effort is the opt-in unlocked fallback)
+KeyManager::start(base_dir, mk_provider, public_cache_policy, rotation_error_policy) -> Result<KeyManager<P>>
+KeyManager::start_best_effort(base_dir, mk_provider, public_cache_policy, rotation_error_policy) -> Result<KeyManager<P>>
 
 #[cfg(feature = "insecure-plaintext-mk")]  // dev/tests only
-KeyManager::start_plain(base_dir, kind) -> Result<KeyManager<InsecurePlaintextMkProvider>>
+KeyManager::start_plain(base_dir, public_cache_policy, rotation_error_policy) -> Result<KeyManager<InsecurePlaintextMkProvider>>
 
 // Access to private keys (callback pattern, loaded only for the call)
 manager.with_signing_keys(|ed_seed: ArenaByte32, dili_sk: ArenaByte32| { ... }) -> Result<R>
 manager.with_x25519_and_kyber_sk(|x_seed: ArenaByte32, kyber_sk: ArenaByte64| { ... }) -> Result<R>
 
 // Public keys / memory-locking state
-manager.public_keys() -> &PublicKeys
+manager.public_keys() -> PublicKeys     // owned snapshot (cloned from behind the lock)
+manager.reload_public_keys() -> Result<()>  // re-derive from the private keys and re-check the cache
 manager.memory_locked() -> bool   // is the secret arena wired into RAM?
 
 // Derived secrets (label-based)
 manager.derive_secret32(label: &[u8]) -> Result<SecByte32>
 
-// Rotation
-manager.maybe_rotate_mk() -> Result<()>
+// Rotation (runs automatically on a background thread; this only adjusts the cadence)
+manager.set_rotate_interval(interval: Duration)
 ```
+
+`KeyManager<P>` is `Clone` (a cheap `Arc` handle) and every method takes
+`&self`; the background rotation thread is stopped and joined when the
+last handle is dropped. `P: MkProvider` must be `Send + Sync + 'static`.
+
+**`PublicCachePolicy`** (`keys::PublicCachePolicy`) governs how the cached
+`pub/*.pub` files are reconciled against the keys derived from the private
+seeds, so a swapped public key cannot pass unnoticed:
+
+- `Strict` - a missing **or** mismatched public key is an error.
+- `RepairMissingOnly` - a *missing* public key is re-derived from the
+  private seed and rewritten; a *mismatched* one is still an error (a wrong
+  value is tampering, not a gap).
+
+A mismatch/missing surfaces as `invalid_public_key`, whose error carries the
+offending key (e.g. `invalid public key [ed25519-seed-v1]: public_key_mismatch`).
+
+**`RotationErrorPolicy`** (`keys::RotationErrorPolicy`) decides what a
+background rotation failure does; both variants take a required callback:
+
+- `Strict(cb)` - **fail-closed**: the manager is disabled (every later
+  operation returns an error) *and* `cb` is invoked with the error.
+- `Callback(cb)` - `cb` is invoked and the manager keeps running (it will
+  retry on the next interval).
 
 `start` takes an exclusive advisory lock on `<store>/.lock`, held for the
 manager's lifetime, so exactly one instance drives a store directory; a
@@ -769,7 +803,8 @@ Selected `ErrorKind` variants:
 - `AeadFailed`: AEAD authenticity/decryption failure
 - `KdfFailed`: key derivation failure
 - `KemInvalidCiphertext`: malformed KEM ciphertext
-- `InvalidPublicKey { reason }`: unusable public key (e.g. low-order point)
+- `InvalidPublicKey { key, reason }`: unusable public key; `key` names the
+  offending key (e.g. low-order point, or a tampered/missing public-cache entry)
 - `KeyImportFailed { reason }`: raw bytes could not be parsed into a key
 - `MalformedInput { reason }`: a caller-supplied serialized blob could not be
   parsed (e.g. a corrupt or untrusted OPAQUE record/state/setup); distinct from

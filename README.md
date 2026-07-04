@@ -22,8 +22,8 @@ caller as a validated `crypto::Context` - the crypto itself is application-agnos
 ### 1. At-rest key management (`keys`, `secrets`)
 
 `KeyManager` owns an on-disk key store: it generates the hybrid identity, seals private keys under
-a master key from a pluggable `MkProvider`, and can perform crash-safe rotation and rewrap when
-the caller invokes rotation. The only built-in provider stores the MK in cleartext and is gated
+a master key from a pluggable `MkProvider`, and performs crash-safe MK rotation and rewrap
+automatically on a background thread. The only built-in provider stores the MK in cleartext and is gated
 behind the non-default `insecure-plaintext-mk` feature (dev/tests only); production callers supply
 password-backed, hardware-backed, TPM-backed, or application-specific sealing (see
 `examples/password_mkprovider.rs` and [`docs/mkprovider-examples.md`](docs/mkprovider-examples.md)).

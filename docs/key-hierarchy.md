@@ -5,10 +5,10 @@ keys come from, where they live, how long they last, and what they
 protect. All labels are pinned by tests
 (`registry_values_are_pinned`).
 
-`lithium_core`'s `KeyManager` does not spawn a background rotator or own any
-thread of its own. It provides the key manager and the crash-safe rotation
-primitive; the caller decides when to invoke rotation. (The unrelated
-`utils::store` helper does run its own background cleanup thread.)
+`lithium_core`'s `KeyManager` spawns a background thread that runs the
+crash-safe MK rotation on the configured interval; the thread is stopped and
+joined when the last handle is dropped. (The unrelated `utils::store` helper
+likewise runs its own background cleanup thread.)
 
 ## The `.keyf` wrapping
 
@@ -27,7 +27,7 @@ directly as the payload encryption key.
 
 | Key             | Type        | Derivation / source                  | Storage                               | Lifetime / rotation                                                                                  | Protects                           |
 | --------------- | ----------- | ------------------------------------ | ------------------------------------- | ---------------------------------------------------------------------------------------------------- | ---------------------------------- |
-| Master Key (MK) | 32 B random | supplied/sealed by an `MkProvider`   | provider-specific                     | rotated when the caller invokes `KeyManager::maybe_rotate_mk()` after the configured interval passes | every `.keyf` file through the KEK |
+| Master Key (MK) | 32 B random | supplied/sealed by an `MkProvider`   | provider-specific                     | rotated automatically by `KeyManager`'s background thread once the configured interval passes | every `.keyf` file through the KEK |
 | KEK             | 32 B        | `HKDF(MK, file_salt, info="kek/v1")` | not stored; derived on use            | changes when the MK changes                                                                          | wrapping the DEK in a `.keyf`      |
 | `.keyf` DEK     | 32 B random | random per file                      | in the `.keyf`, wrapped under the KEK | rewrapped on MK rotation; value unchanged                                                            | the key/secret payload in the file |
 
@@ -65,12 +65,15 @@ requires an `MkProvider`.
 
 ## Rotation
 
-`KeyManager` supports crash-safe MK rotation, but it does not run a background
-task on its own. The caller is expected to call `maybe_rotate_mk()` periodically
-from its own daemon, service loop, timer, or application lifecycle.
+`KeyManager` runs crash-safe MK rotation on its own background thread, started
+by `start` and stopped/joined when the last handle is dropped. The caller drives
+nothing.
 
 By default, the rotation interval is 1 hour. The caller may override it with
-`set_rotate_interval(...)`.
+`set_rotate_interval(...)`. A rotation failure is handled per the
+`RotationErrorPolicy` passed to `start`: `Callback(cb)` reports it and keeps
+running; `Strict(cb)` additionally fail-closes the manager so every subsequent
+operation errors. It is never dropped silently.
 
 Rotation rewraps each `.keyf` DEK under a KEK derived from the new MK. The DEK
 values themselves do not change, so the encrypted payloads are not decrypted and
