@@ -325,10 +325,84 @@ fn secret_string_from_utf8_vec_valid() {
 }
 
 #[test]
+fn secret_string_new_preserves_content_regardless_of_capacity() {
+    let mut over = String::with_capacity(8192);
+    over.push_str("over-capacity-secret");
+    assert!(over.capacity() > over.len(), "precondition: spare capacity");
+    assert_eq!(SecretString::new(over).expose(), "over-capacity-secret");
+
+    let mut exact = String::from("exact-secret");
+    exact.shrink_to_fit();
+    assert_eq!(
+        exact.capacity(),
+        exact.len(),
+        "precondition: no spare capacity"
+    );
+    assert_eq!(SecretString::new(exact).expose(), "exact-secret");
+
+    assert_eq!(SecretString::new(String::new()).expose(), "");
+}
+
+#[test]
+fn secret_string_from_utf8_vec_error_source_holds_no_secret_bytes() {
+    let mut secret = b"SECRETMARKER".to_vec();
+    secret.extend_from_slice(b"\xff\xfe");
+    let err = SecretString::from_utf8_vec(secret).unwrap_err();
+
+    assert_eq!(err.kind, ErrorKind::StringPolicy);
+    let src = err.source.as_deref().expect("positional source is kept");
+    assert!(
+        src.downcast_ref::<std::str::Utf8Error>().is_some(),
+        "source must be the positional Utf8Error, which carries no bytes"
+    );
+    assert!(
+        src.downcast_ref::<std::string::FromUtf8Error>().is_none(),
+        "FromUtf8Error owns the raw secret bytes and must never reach the error source"
+    );
+}
+
+#[test]
+fn secret_string_new_checked_null_byte_error_has_no_source() {
+    let err = SecretString::new_checked("SECRETMARKER\0tail".to_owned()).unwrap_err();
+    assert_eq!(err.kind, ErrorKind::StringPolicy);
+    assert!(
+        err.source.is_none(),
+        "the rejected plaintext must not be echoed through an error source"
+    );
+}
+
+#[test]
+fn secret_string_decode_hex_invalid_char_leaks_no_source() {
+    let ss = SecretString::new("deadbeeZ".to_owned());
+    let err = ss.decode_hex().unwrap_err();
+    assert_eq!(err.kind, ErrorKind::InvalidHex);
+    assert!(
+        err.source.is_none(),
+        "the offending hex character must not be carried in an error source"
+    );
+}
+
+#[test]
 fn secret_string_decode_hex() {
     let ss = SecretString::new("deadbeef".to_owned());
     let bytes = ss.decode_hex().unwrap();
     assert_eq!(bytes.as_slice(), &[0xDE, 0xAD, 0xBE, 0xEF]);
+}
+
+#[test]
+fn secret_string_decode_hex_rejects_uppercase() {
+    let err = SecretString::new("DEADBEEF".to_owned())
+        .decode_hex()
+        .unwrap_err();
+    assert_eq!(err.kind, ErrorKind::HexMustBeLowercase);
+}
+
+#[test]
+fn secret_string_decode_hex_rejects_0x_prefix() {
+    let err = SecretString::new("0xdeadbeef".to_owned())
+        .decode_hex()
+        .unwrap_err();
+    assert_eq!(err.kind, ErrorKind::HexDisallowedPrefix);
 }
 
 #[test]
@@ -418,6 +492,39 @@ fn secret_json_take_string_removes_field() {
     let err = j.get_string("token").unwrap_err();
     assert_eq!(err.kind, ErrorKind::JsonMissingField { key: "token" });
     assert_eq!(j.get_string("other").unwrap().expose(), "keep");
+}
+
+#[test]
+fn secret_json_take_type_mismatch_keeps_field() {
+    let mut j = SecretJson::from_str(r#"{"n": 42, "s": "hi", "b": true}"#).unwrap();
+
+    assert!(j.take_string("n").is_err());
+    assert!(j.take_bool("n").is_err());
+    assert!(j.take_array("n").is_err());
+    assert!(j.take_object("n").is_err());
+    assert!(j.take_bool("s").is_err());
+    assert!(j.take_i64("s").is_err());
+    assert!(j.take_string("b").is_err());
+
+    use secrecy::ExposeSecret;
+    assert_eq!(*j.take_i64("n").unwrap().expose_secret(), 42i64);
+    assert_eq!(j.take_string("s").unwrap().expose(), "hi");
+    assert!(j.take_bool("b").unwrap());
+}
+
+#[test]
+fn secret_json_take_number_out_of_range_keeps_field() {
+    use secrecy::ExposeSecret;
+    let mut j = SecretJson::from_str(r#"{"neg": -5}"#).unwrap();
+    let err = j.take_u64("neg").unwrap_err();
+    assert_eq!(
+        err.kind,
+        ErrorKind::JsonTypeMismatch {
+            key: "neg",
+            expected: "number"
+        }
+    );
+    assert_eq!(*j.take_i64("neg").unwrap().expose_secret(), -5i64);
 }
 
 #[test]
@@ -523,4 +630,22 @@ fn secret_json_from_bytes_valid() {
 fn secret_json_from_vec_valid() {
     let j = SecretJson::from_vec(b"{\"z\":true}".to_vec()).unwrap();
     assert!(j.get_bool("z").unwrap());
+}
+
+#[test]
+fn secret_json_from_vec_invalid_utf8_source_holds_no_secret_bytes() {
+    let mut secret = b"{\"k\":\"SECRETMARKER".to_vec();
+    secret.extend_from_slice(b"\xff\xfe");
+    let err = SecretJson::from_vec(secret).unwrap_err();
+
+    assert_eq!(err.kind, ErrorKind::StringPolicy);
+    let src = err.source.as_deref().expect("positional source is kept");
+    assert!(
+        src.downcast_ref::<std::str::Utf8Error>().is_some(),
+        "source must be the positional Utf8Error, which carries no bytes"
+    );
+    assert!(
+        src.downcast_ref::<std::string::FromUtf8Error>().is_none(),
+        "FromUtf8Error owns the raw secret bytes and must never reach the error source"
+    );
 }

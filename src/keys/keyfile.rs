@@ -244,7 +244,7 @@ fn parse_keyfile(
     idx += 12;
 
     let len_ct_payload = read_u32(buf, &mut idx)? as usize;
-    if idx + len_ct_payload > buf.len() {
+    if idx + len_ct_payload != buf.len() {
         return Err(LithiumError::malformed_keyfile());
     }
     let ct_payload = buf[idx..idx + len_ct_payload].to_vec();
@@ -481,6 +481,32 @@ mod tests {
         assert_eq!(cw, ct_wrap.to_vec());
         assert_eq!(np, nonce_payload);
         assert_eq!(cp, ct_payload.to_vec());
+    }
+
+    #[test]
+    fn trailing_garbage_is_rejected() {
+        let rec = build_record(
+            KEYFILE_VERSION,
+            ALG_ID_AES256_GCM_SIV,
+            DEK_LEN,
+            &[0x33u8; 32],
+            &[0x44u8; 12],
+            &[0x55u8; 48],
+            &[0x66u8; 12],
+            &[0x77u8; 40],
+        );
+
+        parse_keyfile(&SecretBytes::new(rec.clone())).expect("canonical record must parse");
+
+        for extra in [&b"\x00"[..], b"garbage", &[0u8; 64][..]] {
+            let mut tampered = rec.clone();
+            tampered.extend_from_slice(extra);
+            assert!(
+                parse_keyfile(&SecretBytes::new(tampered)).is_err(),
+                "a record with {} trailing bytes must be rejected",
+                extra.len()
+            );
+        }
     }
 
     #[cfg(unix)]

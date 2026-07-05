@@ -15,6 +15,7 @@ use argon2::Argon2;
 use zeroize::Zeroize;
 
 use lithium_core::crypto::{aead, keys};
+use lithium_core::keys::keyfile::{read_keyfile_bytes, write_secure};
 use lithium_core::keys::{KeyManager, MkProvider, PublicCachePolicy, RotationErrorPolicy};
 use lithium_core::public::PublicBytes;
 use lithium_core::secrets::{SecByte32, SecretBytes};
@@ -44,7 +45,8 @@ impl MkProvider for PasswordMkProvider {
     fn load_mk(&self) -> Result<SecByte32> {
         // A missing file surfaces as not-found, which tells KeyManager to
         // generate a fresh master key and call store_mk.
-        let data = std::fs::read(&self.path).map_err(LithiumError::io)?;
+        let data = read_keyfile_bytes(&self.path)?;
+        let data = data.expose_as_slice();
         if data.len() <= SALT_LEN {
             return Err(LithiumError::malformed_keyfile());
         }
@@ -67,7 +69,7 @@ impl MkProvider for PasswordMkProvider {
         let mut out = Vec::with_capacity(SALT_LEN + blob.len());
         out.extend_from_slice(salt.expose_as_slice());
         out.extend_from_slice(blob.as_slice());
-        std::fs::write(&self.path, &out).map_err(LithiumError::io)
+        write_secure(&self.path, &out)
     }
 }
 

@@ -164,6 +164,11 @@ impl LithiumError {
     }
 
     #[inline]
+    pub fn ttl_too_large() -> Self {
+        Self::new(ErrorKind::TtlTooLarge)
+    }
+
+    #[inline]
     pub fn invalid_credentials(msg: &'static str) -> Self {
         Self::new(ErrorKind::InvalidCredentials { msg })
     }
@@ -286,6 +291,7 @@ pub enum ErrorKind {
         reason: &'static str,
     },
     KeystoreLocked,
+    TtlTooLarge,
     EnvMissing {
         name: &'static str,
     },
@@ -344,6 +350,7 @@ impl fmt::Display for ErrorKind {
             ErrorKind::KeystoreLocked => {
                 write!(f, "keystore already locked by another instance")
             }
+            ErrorKind::TtlTooLarge => write!(f, "ttl too large"),
             ErrorKind::EnvMissing { name } => write!(f, "missing environment variable: {name}"),
             ErrorKind::EnvInvalid { name } => write!(f, "invalid environment variable: {name}"),
             ErrorKind::StateMissing { name } => write!(f, "missing state: {name}"),

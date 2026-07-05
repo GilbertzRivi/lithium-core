@@ -48,7 +48,7 @@ pub trait MkProvider {
     fn load_mk(&self) -> Result<SecByte32>;
     fn store_mk(&self, mk: &SecByte32) -> Result<()>;
 
-    fn derive_secret32(
+    fn get_or_create_secret32(
         &self,
         mk: &SecByte32,
         label: &[u8],
@@ -314,6 +314,15 @@ fn ensure_seed_keypair<const N: usize, T: AsRef<[u8]>>(
     Ok(pk)
 }
 
+const MAX_SECRET_LABEL_LEN: usize = 64;
+
+fn validate_secret_label(label: &[u8]) -> Result<()> {
+    if label.is_empty() || label.len() > MAX_SECRET_LABEL_LEN {
+        return Err(LithiumError::malformed_input("secret_label_len"));
+    }
+    Ok(())
+}
+
 fn label_hex(label: &[u8]) -> String {
     hex::encode(label)
 }
@@ -335,6 +344,7 @@ fn load_or_create_label_secret32(
     mk: &MasterKey32,
     label: &[u8],
 ) -> Result<SecByte32> {
+    validate_secret_label(label)?;
     let path = label_secret_path(secrets_dir, label);
     let key_type = label_key_type(label);
 
@@ -353,6 +363,7 @@ fn load_or_create_label_bytes(
     label: &[u8],
     generate: impl FnOnce() -> Result<SecretBytes>,
 ) -> Result<SecretBytes> {
+    validate_secret_label(label)?;
     let path = label_secret_path(secrets_dir, label);
     let key_type = label_key_type(label);
 
@@ -867,32 +878,32 @@ impl<P: MkProvider + Send + Sync + 'static> KeyManager<P> {
         Ok(())
     }
 
-    pub fn derive_secret32(&self, label: &[u8]) -> Result<SecByte32> {
+    pub fn get_or_create_secret32(&self, label: &[u8]) -> Result<SecByte32> {
         let _gate = self.shared.read_gate()?;
         let root_mk = self.shared.mk_provider.load_mk()?;
         self.shared
             .mk_provider
-            .derive_secret32(&root_mk, label, &self.shared.secrets_dir)
+            .get_or_create_secret32(&root_mk, label, &self.shared.secrets_dir)
     }
 
-    pub fn encrypt_with_derived(
+    pub fn encrypt_with_label(
         &self,
         label: &[u8],
         plaintext: &SecretBytes,
         aad: &[u8],
     ) -> Result<PublicBytes> {
-        let dek = self.derive_secret32(label)?;
+        let dek = self.get_or_create_secret32(label)?;
         let nonce = keys::random_12()?;
         aead::encrypt(plaintext, &dek, &nonce, aad)
     }
 
-    pub fn decrypt_with_derived(
+    pub fn decrypt_with_label(
         &self,
         label: &[u8],
         blob: &PublicBytes,
         aad: &[u8],
     ) -> Result<SecretBytes> {
-        let dek = self.derive_secret32(label)?;
+        let dek = self.get_or_create_secret32(label)?;
         aead::decrypt(blob, &dek, aad)
     }
 

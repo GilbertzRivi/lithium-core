@@ -224,6 +224,18 @@ current library APIs, both bounded and `ZeroizeOnDrop`:
   the ML-KEM decapsulation key) on the normal heap for the duration
   of the operation. The seed is born-locked; its expansion is not.
 
+The heap-backed secret string types - `SecretString` and
+`SecretJson` - sit behind `secrecy`'s `SecretBox` on the normal heap
+rather than in the arena, because their sizes are caller-driven
+(passwords, parsed JSON). Both zeroize on drop. Constructing the
+boxed form leaves no copy in freed heap regardless of the allocator:
+the source buffer is reused when it is already exact, otherwise the
+bytes are copied into an exact-size box and the source is zeroized.
+`serde_json` and UTF-8 validation may still make transient
+allocations while parsing untrusted input; the
+`SecretJson::from_zeroizing_*` constructors keep the caller-owned
+input under `Zeroizing`.
+
 Also out of reach: a root attacker or `ptrace`/`/proc/pid/mem` from
 root reading live memory; register/stack spills of secret bytes;
 cold-boot / DMA / hardware attacks; OS crash reporters outside the

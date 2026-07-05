@@ -9,6 +9,7 @@ use rand_core::OsRng;
 
 use crate::error::{LithiumError, Result};
 use crate::opaque::suite::LithiumCipherSuite;
+use crate::secrets::SecretBytes;
 
 type Setup = opaque_ke::ServerSetup<LithiumCipherSuite>;
 
@@ -20,12 +21,12 @@ impl ServerSetup {
         Self(Setup::new(&mut rng))
     }
 
-    pub fn serialize(&self) -> Vec<u8> {
-        self.0.serialize().to_vec()
+    pub fn serialize(&self) -> SecretBytes {
+        SecretBytes::from_wiped(self.0.serialize())
     }
 
-    pub fn deserialize(bytes: &[u8]) -> Result<Self> {
-        Setup::deserialize(bytes)
+    pub fn deserialize(bytes: &SecretBytes) -> Result<Self> {
+        Setup::deserialize(bytes.expose_as_slice())
             .map(Self)
             .map_err(|_| LithiumError::malformed_input("opaque_server_setup"))
     }
@@ -68,7 +69,7 @@ pub fn server_login_start(
     handler: &[u8],
     server_id: &[u8],
     context: Option<&[u8]>,
-) -> Result<(Vec<u8>, Vec<u8>)> {
+) -> Result<(Vec<u8>, SecretBytes)> {
     let record = ServerRegistration::<LithiumCipherSuite>::deserialize(record_bytes)
         .map_err(|_| LithiumError::malformed_input("opaque_record"))?;
     let request = CredentialRequest::<LithiumCipherSuite>::deserialize(request_bytes)
@@ -92,18 +93,18 @@ pub fn server_login_start(
 
     Ok((
         res.message.serialize().to_vec(),
-        res.state.serialize().to_vec(),
+        SecretBytes::from_wiped(res.state.serialize()),
     ))
 }
 
 pub fn server_login_finish(
-    state_bytes: &[u8],
+    state: &SecretBytes,
     finalization_bytes: &[u8],
     handler: &[u8],
     server_id: &[u8],
     context: Option<&[u8]>,
 ) -> Result<()> {
-    let state = ServerLogin::<LithiumCipherSuite>::deserialize(state_bytes)
+    let state = ServerLogin::<LithiumCipherSuite>::deserialize(state.expose_as_slice())
         .map_err(|_| LithiumError::malformed_input("opaque_login_state"))?;
     let finalization =
         CredentialFinalization::<LithiumCipherSuite>::deserialize(finalization_bytes)
@@ -126,5 +127,5 @@ pub fn opaque_parse_fuzz(data: &[u8]) {
     let _ = RegistrationUpload::<LithiumCipherSuite>::deserialize(data);
     let _ = CredentialRequest::<LithiumCipherSuite>::deserialize(data);
     let _ = CredentialFinalization::<LithiumCipherSuite>::deserialize(data);
-    let _ = ServerSetup::deserialize(data);
+    let _ = ServerSetup::deserialize(&SecretBytes::from_slice(data));
 }

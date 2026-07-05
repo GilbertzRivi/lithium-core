@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use lithium_core::keys::{KeyManager, MkProvider, PublicCachePolicy, RotationErrorPolicy};
 use lithium_core::secrets::SecByte32;
-use lithium_core::{LithiumError, Result};
+use lithium_core::{ErrorKind, LithiumError, Result};
 
 struct FlakyMk {
     path: PathBuf,
@@ -62,7 +62,7 @@ fn auto_rotation_rewraps_and_preserves_secrets() {
     .unwrap();
 
     let identity = km.public_keys();
-    let secret_before = km.derive_secret32(b"label").unwrap();
+    let secret_before = km.get_or_create_secret32(b"label").unwrap();
     let mk_before = std::fs::read(&mk_path).unwrap();
 
     km.set_rotate_interval(Duration::from_millis(40));
@@ -73,7 +73,7 @@ fn auto_rotation_rewraps_and_preserves_secrets() {
         "background rotation must replace the master key on disk"
     );
 
-    let secret_after = km.derive_secret32(b"label").unwrap();
+    let secret_after = km.get_or_create_secret32(b"label").unwrap();
     assert_eq!(
         secret_before, secret_after,
         "a derived secret must survive rotation unchanged (keyfiles rewrapped, not regenerated)"
@@ -120,7 +120,7 @@ fn callback_policy_reports_error_and_keeps_running() {
 
     fail.store(false, Ordering::Release);
     assert!(
-        km.derive_secret32(b"still-alive").is_ok(),
+        km.get_or_create_secret32(b"still-alive").is_ok(),
         "Callback policy must not disable the manager"
     );
 
@@ -160,10 +160,50 @@ fn strict_policy_disables_manager_after_failure() {
 
     fail.store(false, Ordering::Release);
     assert!(
-        km.derive_secret32(b"should-fail").is_err(),
+        km.get_or_create_secret32(b"should-fail").is_err(),
         "Strict must fail-close: every op errors after a rotation failure, even once the fault clears"
     );
 
     drop(km);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn secret_label_length_is_bounded() {
+    let dir = tmp_dir("label-limit");
+    std::fs::remove_dir_all(&dir).ok();
+
+    let km = KeyManager::start(
+        &dir,
+        FlakyMk {
+            path: dir.join("mk"),
+            fail: Arc::new(AtomicBool::new(false)),
+        },
+        PublicCachePolicy::RepairMissingOnly,
+        RotationErrorPolicy::Callback(Box::new(|_| {})),
+    )
+    .unwrap();
+
+    assert!(
+        km.get_or_create_secret32(&[b'a'; 64]).is_ok(),
+        "a 64-byte label is at the limit and must be accepted"
+    );
+
+    let too_long = km.get_or_create_secret32(&[b'a'; 65]).unwrap_err();
+    assert_eq!(
+        too_long.kind,
+        ErrorKind::MalformedInput {
+            reason: "secret_label_len"
+        }
+    );
+
+    let empty = km.get_or_create_secret32(b"").unwrap_err();
+    assert_eq!(
+        empty.kind,
+        ErrorKind::MalformedInput {
+            reason: "secret_label_len"
+        }
+    );
+
     std::fs::remove_dir_all(&dir).ok();
 }

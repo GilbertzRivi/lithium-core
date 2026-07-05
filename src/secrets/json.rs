@@ -38,8 +38,14 @@ impl SecretJson {
         })
     }
     #[inline]
-    pub fn from_string(s: String) -> Result<Self> {
-        let v: Value = serde_json::from_str(&s)?;
+    pub fn from_string(mut s: String) -> Result<Self> {
+        let v: Value = match serde_json::from_str(&s) {
+            Ok(v) => v,
+            Err(e) => {
+                s.zeroize();
+                return Err(e.into());
+            }
+        };
         Ok(Self {
             value: v,
             raw: Some(SecretString::new(s)),
@@ -53,8 +59,11 @@ impl SecretJson {
     }
     #[inline]
     pub fn from_vec(bytes: Vec<u8>) -> Result<Self> {
-        let s =
-            String::from_utf8(bytes).map_err(|e| LithiumError::string_policy().with_source(e))?;
+        let s = String::from_utf8(bytes).map_err(|e| {
+            let positional = e.utf8_error();
+            e.into_bytes().zeroize();
+            LithiumError::string_policy().with_source(positional)
+        })?;
         Self::from_string(s)
     }
     #[inline]
@@ -176,75 +185,76 @@ impl SecretJson {
         }
     }
     #[inline]
-    pub fn take_string(&mut self, key: &'static str) -> Result<SecretString> {
-        let obj = self.obj_mut()?;
-        match obj.remove(key) {
-            Some(Value::String(s)) => Ok(SecretString::new(s)),
-            Some(other) => Err(LithiumError::json_type_mismatch(key, ty_name(&other))),
+    fn ensure_takeable(&self, key: &'static str, matches: impl Fn(&Value) -> bool) -> Result<()> {
+        match self.obj()?.get(key) {
+            Some(v) if matches(v) => Ok(()),
+            Some(v) => Err(LithiumError::json_type_mismatch(key, ty_name(v))),
             None => Err(LithiumError::json_missing_field(key)),
+        }
+    }
+    #[inline]
+    pub fn take_string(&mut self, key: &'static str) -> Result<SecretString> {
+        self.ensure_takeable(key, Value::is_string)?;
+        match self.obj_mut()?.remove(key) {
+            Some(Value::String(s)) => Ok(SecretString::new(s)),
+            _ => Err(LithiumError::json_missing_field(key)),
         }
     }
     #[inline]
     pub fn take_bool(&mut self, key: &'static str) -> Result<bool> {
-        let obj = self.obj_mut()?;
-        match obj.remove(key) {
+        self.ensure_takeable(key, Value::is_boolean)?;
+        match self.obj_mut()?.remove(key) {
             Some(Value::Bool(b)) => Ok(b),
-            Some(other) => Err(LithiumError::json_type_mismatch(key, ty_name(&other))),
-            None => Err(LithiumError::json_missing_field(key)),
+            _ => Err(LithiumError::json_missing_field(key)),
         }
     }
     #[inline]
     pub fn take_i64(&mut self, key: &'static str) -> Result<SecretBox<i64>> {
-        let obj = self.obj_mut()?;
-        match obj.remove(key) {
+        self.ensure_takeable(key, |v| v.as_i64().is_some())?;
+        match self.obj_mut()?.remove(key) {
             Some(Value::Number(n)) => n
                 .as_i64()
                 .map(|i| SecretBox::new(Box::new(i)))
                 .ok_or_else(|| LithiumError::json_type_mismatch(key, "number")),
-            Some(other) => Err(LithiumError::json_type_mismatch(key, ty_name(&other))),
-            None => Err(LithiumError::json_missing_field(key)),
+            _ => Err(LithiumError::json_missing_field(key)),
         }
     }
     #[inline]
     pub fn take_u64(&mut self, key: &'static str) -> Result<SecretBox<u64>> {
-        let obj = self.obj_mut()?;
-        match obj.remove(key) {
+        self.ensure_takeable(key, |v| v.as_u64().is_some())?;
+        match self.obj_mut()?.remove(key) {
             Some(Value::Number(n)) => n
                 .as_u64()
                 .map(|u| SecretBox::new(Box::new(u)))
                 .ok_or_else(|| LithiumError::json_type_mismatch(key, "number")),
-            Some(other) => Err(LithiumError::json_type_mismatch(key, ty_name(&other))),
-            None => Err(LithiumError::json_missing_field(key)),
+            _ => Err(LithiumError::json_missing_field(key)),
         }
     }
     #[inline]
     pub fn take_f64(&mut self, key: &'static str) -> Result<SecretBox<f64>> {
-        let obj = self.obj_mut()?;
-        match obj.remove(key) {
+        self.ensure_takeable(key, |v| v.as_f64().is_some())?;
+        match self.obj_mut()?.remove(key) {
             Some(Value::Number(n)) => n
                 .as_f64()
                 .map(|u| SecretBox::new(Box::new(u)))
                 .ok_or_else(|| LithiumError::json_type_mismatch(key, "number")),
-            Some(other) => Err(LithiumError::json_type_mismatch(key, ty_name(&other))),
-            None => Err(LithiumError::json_missing_field(key)),
+            _ => Err(LithiumError::json_missing_field(key)),
         }
     }
     #[inline]
     pub fn take_array(&mut self, key: &'static str) -> Result<Vec<SecretJson>> {
-        let obj = self.obj_mut()?;
-        match obj.remove(key) {
+        self.ensure_takeable(key, Value::is_array)?;
+        match self.obj_mut()?.remove(key) {
             Some(Value::Array(a)) => Ok(a.into_iter().map(SecretJson::from).collect()),
-            Some(other) => Err(LithiumError::json_type_mismatch(key, ty_name(&other))),
-            None => Err(LithiumError::json_missing_field(key)),
+            _ => Err(LithiumError::json_missing_field(key)),
         }
     }
     #[inline]
     pub fn take_object(&mut self, key: &'static str) -> Result<SecretJson> {
-        let obj = self.obj_mut()?;
-        match obj.remove(key) {
+        self.ensure_takeable(key, Value::is_object)?;
+        match self.obj_mut()?.remove(key) {
             Some(Value::Object(o)) => Ok(SecretJson::from(Value::Object(o))),
-            Some(other) => Err(LithiumError::json_type_mismatch(key, ty_name(&other))),
-            None => Err(LithiumError::json_missing_field(key)),
+            _ => Err(LithiumError::json_missing_field(key)),
         }
     }
     #[inline]

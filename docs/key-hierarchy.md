@@ -32,7 +32,7 @@ directly as the payload encryption key.
 | `.keyf` DEK     | 32 B random | random per file                      | in the `.keyf`, wrapped under the KEK | rewrapped on MK rotation; value unchanged                                                            | the key/secret payload in the file |
 
 The caller can also derive application-specific 32-byte secrets straight from
-the MK with its own label (`derive_secret32(label)`). Those outputs and their
+the MK with its own label (`get_or_create_secret32(label)`). Those outputs and their
 labels are the caller's responsibility.
 
 ## MkProvider

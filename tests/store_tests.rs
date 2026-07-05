@@ -4,6 +4,7 @@
 use std::thread::sleep;
 use std::time::Duration;
 
+use lithium_core::ErrorKind;
 use lithium_core::secrets::SecretBytes;
 use lithium_core::utils::store::EphemeralStoreManager;
 
@@ -193,4 +194,21 @@ fn store_set_if_absent_allows_reinsertion_after_expiry() {
         .unwrap();
     assert!(second, "should succeed after original TTL expired");
     assert_eq!(store.peek("key").unwrap().unwrap().expose_as_slice(), b"v2");
+}
+
+#[test]
+fn store_rejects_ttl_overflow_instead_of_panicking() {
+    let store = EphemeralStoreManager::new().unwrap();
+
+    let err = store.set("k", sb(b"v"), Duration::MAX).unwrap_err();
+    assert_eq!(err.kind, ErrorKind::TtlTooLarge);
+
+    let err2 = store
+        .set_if_absent("k2", sb(b"v"), Duration::MAX)
+        .unwrap_err();
+    assert_eq!(err2.kind, ErrorKind::TtlTooLarge);
+
+    store.set("ok", sb(b"v"), Duration::from_secs(60)).unwrap();
+    assert!(store.peek("ok").unwrap().is_some());
+    assert!(store.peek("k").unwrap().is_none());
 }

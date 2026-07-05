@@ -5,7 +5,7 @@ use lithium_core::ErrorKind;
 use lithium_core::crypto::kdf::Argon2Params;
 use lithium_core::opaque::server::ServerSetup;
 use lithium_core::opaque::{client, server};
-use lithium_core::secrets::{SecByte64, SecretString};
+use lithium_core::secrets::{SecByte64, SecretBytes, SecretString};
 
 const CID: &[u8] = b"user-123";
 const HANDLER: &[u8] = b"client-handle";
@@ -154,7 +154,7 @@ fn tampered_record_does_not_authenticate() {
 
 #[test]
 fn malformed_server_setup_is_malformed_input() {
-    let err = ServerSetup::deserialize(b"not a serialized setup")
+    let err = ServerSetup::deserialize(&SecretBytes::from_slice(b"not a serialized setup"))
         .err()
         .expect("deserialize of garbage must fail");
     assert!(is_malformed(err.kind), "got {:?}", err.kind);
@@ -182,9 +182,14 @@ fn malformed_login_record_is_malformed_input_not_internal() {
 
 #[test]
 fn malformed_login_state_is_malformed_input_not_internal() {
-    let err =
-        server::server_login_finish(b"corrupt-state", b"corrupt-final", HANDLER, SERVER, None)
-            .unwrap_err();
+    let err = server::server_login_finish(
+        &SecretBytes::from_slice(b"corrupt-state"),
+        b"corrupt-final",
+        HANDLER,
+        SERVER,
+        None,
+    )
+    .unwrap_err();
     assert!(
         is_malformed(err.kind),
         "a corrupt login state must not be an internal library bug: {:?}",

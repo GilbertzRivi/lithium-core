@@ -147,10 +147,12 @@ impl EphemeralStoreManager {
         }
     }
 
-    fn next_version(guard: &mut StoreInner) -> u64 {
+    fn next_version(guard: &mut StoreInner) -> Result<u64> {
         let v = guard.next_version;
-        guard.next_version = guard.next_version.wrapping_add(1);
-        v
+        guard.next_version = v
+            .checked_add(1)
+            .ok_or_else(|| LithiumError::internal("store_version_overflow"))?;
+        Ok(v)
     }
 
     pub fn set(&self, key: &str, value: SecretBytes, ttl: Duration) -> Result<()> {
@@ -158,10 +160,12 @@ impl EphemeralStoreManager {
             return Ok(());
         }
         let now = Instant::now();
-        let expires_at = now + ttl;
+        let expires_at = now
+            .checked_add(ttl)
+            .ok_or_else(LithiumError::ttl_too_large)?;
         let mut guard = self.lock()?;
         Self::sweep_expired(&mut guard, now);
-        let ver = Self::next_version(&mut guard);
+        let ver = Self::next_version(&mut guard)?;
         guard.map.insert(
             key.to_owned(),
             StoreEntry {
@@ -184,7 +188,9 @@ impl EphemeralStoreManager {
             return Ok(false);
         }
         let now = Instant::now();
-        let expires_at = now + ttl;
+        let expires_at = now
+            .checked_add(ttl)
+            .ok_or_else(LithiumError::ttl_too_large)?;
         let mut guard = self.lock()?;
         Self::sweep_expired(&mut guard, now);
         if let Some(e) = guard.map.get(key)
@@ -192,7 +198,7 @@ impl EphemeralStoreManager {
         {
             return Ok(false);
         }
-        let ver = Self::next_version(&mut guard);
+        let ver = Self::next_version(&mut guard)?;
         guard.map.insert(
             key.to_owned(),
             StoreEntry {

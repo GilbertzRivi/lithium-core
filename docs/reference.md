@@ -363,7 +363,7 @@ rotates the MK once the interval elapses; the caller drives nothing.
 The default interval is **3600 seconds** (1 hour), adjustable with
 `set_rotate_interval`. Rotation runs under an internal write lock, so
 it is serialized against every operation that reads key material -
-concurrent `with_signing_keys`/`derive_secret32` calls never observe a
+concurrent `with_signing_keys`/`get_or_create_secret32` calls never observe a
 half-rewrapped store. A rotation failure is routed through the
 `RotationErrorPolicy` given at `start` (see below), never silently
 dropped.
@@ -374,7 +374,7 @@ dropped.
 pub trait MkProvider {
     fn load_mk(&self) -> Result<SecByte32>;
     fn store_mk(&self, mk: &SecByte32) -> Result<()>;
-    fn derive_secret32(&self, mk: &SecByte32, label: &[u8], secrets_dir: &Path) -> Result<SecByte32>;
+    fn get_or_create_secret32(&self, mk: &SecByte32, label: &[u8], secrets_dir: &Path) -> Result<SecByte32>;
 }
 ```
 
@@ -411,12 +411,28 @@ manager.public_keys() -> PublicKeys     // owned snapshot (cloned from behind th
 manager.reload_public_keys() -> Result<()>  // re-derive from the private keys and re-check the cache
 manager.memory_locked() -> bool   // is the secret arena wired into RAM?
 
-// Derived secrets (label-based)
-manager.derive_secret32(label: &[u8]) -> Result<SecByte32>
+// Label-based secrets: get-or-create a 32-byte secret keyed by label, sealed per label under the MK
+manager.get_or_create_secret32(label: &[u8]) -> Result<SecByte32>
+manager.encrypt_with_label(label: &[u8], plaintext: &SecretBytes, aad: &[u8]) -> Result<PublicBytes>
+manager.decrypt_with_label(label: &[u8], blob: &PublicBytes, aad: &[u8]) -> Result<SecretBytes>
+manager.load_or_create_sealed_blob(label: &[u8], generate: impl FnOnce() -> Result<SecretBytes>) -> Result<SecretBytes>
 
 // Rotation (runs automatically on a background thread; this only adjusts the cadence)
 manager.set_rotate_interval(interval: Duration)
 ```
+
+`get_or_create_secret32` returns the per-label secret, generating and
+sealing it under the MK on first use and loading it thereafter.
+`encrypt_with_label` / `decrypt_with_label` use that secret as the AEAD
+key, so a round-trip needs the same label and `aad`.
+`load_or_create_sealed_blob` is the variable-length variant: it seals the
+output of `generate` under the label on first use.
+
+The label of a label-based secret is 1 to 64 bytes; outside that range
+the call fails with `MalformedInput { reason: "secret_label_len" }`. The
+label becomes the on-disk `{hex_label}.keyf` filename, so the bound keeps
+it within filesystem name limits. Hash a longer identifier down yourself
+before passing it.
 
 `KeyManager<P>` is `Clone` (a cheap `Arc` handle) and every method takes
 `&self`; the background rotation thread is stopped and joined when the
@@ -750,9 +766,14 @@ serialized protocol messages passed between client and server;
 
 ```rust
 ServerSetup::generate() -> Self
-ServerSetup::serialize() -> Vec<u8>
-ServerSetup::deserialize(bytes: &[u8]) -> Result<Self>
+ServerSetup::serialize() -> SecretBytes            // long-term server key; zeroizes on drop
+ServerSetup::deserialize(bytes: &SecretBytes) -> Result<Self>
 ```
+
+The server setup and the login state (`server_login_start`'s second
+return, fed into `server_login_finish`) are secrets in
+`secrets::SecretBytes`; persist the setup through a sealing store.
+The public wire messages are `&[u8]`.
 
 **Registration** (`opaque::client` / `opaque::server`):
 
@@ -851,6 +872,7 @@ Selected `ErrorKind` variants:
 - `StringPolicy`: a password/string policy violation
 - `InvalidCredentials { msg }`: authentication failure
 - `InvalidPermissions { msg }`: a permissions violation
+- `TtlTooLarge`: a `utils::store` TTL that overflows the monotonic clock
 - `Io`: an I/O error
 - `Internal { reason }`: a broken invariant; `reason` is a fixed
   code-authored label, never attacker-derived data

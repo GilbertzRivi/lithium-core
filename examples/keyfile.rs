@@ -4,7 +4,10 @@
 //! At-rest key management lifecycle (Pillar 1): `KeyManager` generates and persists the hybrid
 //! identity, then reloads it unchanged across a restart.
 //!
-//! Run with: `cargo run -p lithium_core --example keyfile`
+//! Uses the dev-only cleartext master-key provider, so it needs the `insecure-plaintext-mk`
+//! feature. For a production-shaped sealing provider see the `password_mkprovider` example.
+//!
+//! Run with: `cargo run --features insecure-plaintext-mk -p lithium_core --example keyfile`
 
 use lithium_core::keys::{
     InsecurePlaintextMkProvider, KeyManager, PublicCachePolicy, RotationErrorPolicy,

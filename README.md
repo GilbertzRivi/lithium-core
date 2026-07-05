@@ -45,8 +45,11 @@ export-key DEK wrapping), `passwords` (DEK generation), `utils::store` (TTL secr
 ## Examples
 
 ```bash
-cargo run --example kyberbox   # hybrid encrypt/decrypt round-trip
-cargo run --example keyfile    # KeyManager identity persistence
+cargo run --example kyberbox            # hybrid encrypt/decrypt round-trip
+cargo run --example password_mkprovider # KeyManager identity, master key sealed under a passphrase
+
+# dev-only: same lifecycle on the built-in cleartext master-key provider
+cargo run --features insecure-plaintext-mk --example keyfile
 ```
 
 ```rust

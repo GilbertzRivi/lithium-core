@@ -16,13 +16,21 @@ pub struct SecretString(SecrecySecretString);
 
 impl SecretString {
     #[inline]
-    pub fn new(s: String) -> Self {
-        Self(SecrecySecretString::new(Box::from(s)))
+    pub fn new(mut s: String) -> Self {
+        let boxed: Box<str> = if s.capacity() == s.len() {
+            s.into_boxed_str()
+        } else {
+            let exact = Box::from(s.as_str());
+            s.zeroize();
+            exact
+        };
+        Self(SecrecySecretString::new(boxed))
     }
 
     #[inline]
-    pub fn new_checked(s: String) -> Result<Self> {
+    pub fn new_checked(mut s: String) -> Result<Self> {
         if s.as_bytes().contains(&0) {
+            s.zeroize();
             return Err(LithiumError::string_policy());
         }
         Ok(Self::new(s))
@@ -48,15 +56,17 @@ impl SecretString {
 
     #[inline]
     pub fn from_utf8_vec(bytes: Vec<u8>) -> Result<Self> {
-        let s =
-            String::from_utf8(bytes).map_err(|e| LithiumError::string_policy().with_source(e))?;
+        let s = String::from_utf8(bytes).map_err(|e| {
+            let positional = e.utf8_error();
+            e.into_bytes().zeroize();
+            LithiumError::string_policy().with_source(positional)
+        })?;
         Self::new_checked(s)
     }
 
     #[inline]
     pub fn decode_hex(&self) -> Result<Zeroizing<Vec<u8>>> {
-        let v = hex::decode(self.expose()).map_err(LithiumError::from)?;
-        Ok(Zeroizing::new(v))
+        Ok(Zeroizing::new(crate::hexcodec::decode_vec(self.expose())?))
     }
 
     #[inline]
