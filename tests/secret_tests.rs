@@ -34,14 +34,14 @@ fn zeroizing_writer_matches_serde_to_vec() {
 #[test]
 fn fixed_bytes_new_and_as_slice() {
     let b = SecByte32::new([0xAA; 32]);
-    assert_eq!(b.as_slice(), &[0xAAu8; 32]);
+    assert_eq!(b.expose_as_slice(), &[0xAAu8; 32]);
 }
 
 #[test]
 fn fixed_bytes_from_slice_ok() {
     let data = [0x11u8; 32];
     let b = SecByte32::from_slice(&data).unwrap();
-    assert_eq!(b.as_slice(), &data);
+    assert_eq!(b.expose_as_slice(), &data);
 }
 
 #[test]
@@ -71,14 +71,14 @@ fn fixed_bytes_from_slice_too_long() {
 #[test]
 fn fixed_bytes_new_zeroed() {
     let b = SecByte32::new_zeroed();
-    assert_eq!(b.as_slice(), &[0u8; 32]);
+    assert_eq!(b.expose_as_slice(), &[0u8; 32]);
 }
 
 #[test]
 fn fixed_bytes_clone() {
     let original = SecByte32::new([0x55; 32]);
     let cloned = original.clone();
-    assert_eq!(original.as_slice(), cloned.as_slice());
+    assert_eq!(original.expose_as_slice(), cloned.expose_as_slice());
 }
 
 #[test]
@@ -98,8 +98,8 @@ fn fixed_bytes_eq_different() {
 #[test]
 fn fixed_bytes_from_array() {
     let arr = [0x33u8; 32];
-    let b: SecByte32 = arr.into();
-    assert_eq!(b.as_slice(), &arr);
+    let b = SecByte32::new(arr);
+    assert_eq!(b.expose_as_slice(), &arr);
 }
 
 #[test]
@@ -107,7 +107,7 @@ fn fixed_bytes_try_from_slice() {
     use std::convert::TryFrom;
     let data = [0x44u8; 32];
     let b = SecByte32::try_from(data.as_slice()).unwrap();
-    assert_eq!(b.as_slice(), &data);
+    assert_eq!(b.expose_as_slice(), &data);
 }
 
 #[test]
@@ -144,7 +144,7 @@ fn fixed_bytes_to_hex_roundtrip() {
 fn fixed_bytes_from_hex_correct_length() {
     let valid = "deadbeef".repeat(8);
     let b = SecByte32::from_hex(&valid).unwrap();
-    assert_eq!(b.as_slice().len(), 32);
+    assert_eq!(b.expose_as_slice().len(), 32);
 }
 
 #[test]
@@ -336,7 +336,7 @@ fn secret_string_decode_hex_fixed() {
     let hex_str = "aa".repeat(32);
     let ss = SecretString::new(hex_str);
     let b32: SecByte32 = ss.decode_hex_fixed().unwrap();
-    assert_eq!(b32.as_slice(), &[0xAAu8; 32]);
+    assert_eq!(b32.expose_as_slice(), &[0xAAu8; 32]);
 }
 
 #[test]

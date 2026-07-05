@@ -298,6 +298,20 @@ impl SecretArena {
         region.as_mut_slice().copy_from_slice(slice);
         Ok(ArenaFixedBytes(region))
     }
+
+    pub fn store_fixed_wiped<const N: usize, T: AsMut<[u8]>>(
+        &self,
+        mut src: T,
+    ) -> Result<ArenaFixedBytes<N>> {
+        let s = src.as_mut();
+        if s.len() != N {
+            return Err(LithiumError::invalid_len(N, s.len()));
+        }
+        let mut region = self.claim(N)?;
+        region.as_mut_slice().copy_from_slice(s);
+        s.zeroize();
+        Ok(ArenaFixedBytes(region))
+    }
 }
 
 pub struct ArenaFixedBytes<const N: usize>(Region);
@@ -309,17 +323,17 @@ impl<const N: usize> ArenaFixedBytes<N> {
     pub const LEN: usize = N;
 
     #[inline]
-    pub fn as_array(&self) -> &[u8; N] {
+    pub fn expose_as_array(&self) -> &[u8; N] {
         <&[u8; N]>::try_from(self.0.as_slice()).expect("region length is N")
     }
 
     #[inline]
-    pub fn as_slice(&self) -> &[u8] {
+    pub fn expose_as_slice(&self) -> &[u8] {
         self.0.as_slice()
     }
 
     #[inline]
-    pub fn as_mut_slice(&mut self) -> &mut [u8] {
+    pub fn expose_as_mut_slice(&mut self) -> &mut [u8] {
         self.0.as_mut_slice()
     }
 
@@ -337,31 +351,31 @@ impl<const N: usize> ArenaFixedBytes<N> {
 impl<const N: usize> core::ops::Deref for ArenaFixedBytes<N> {
     type Target = [u8];
     fn deref(&self) -> &[u8] {
-        self.as_slice()
+        self.expose_as_slice()
     }
 }
 
 impl<const N: usize> core::ops::DerefMut for ArenaFixedBytes<N> {
     fn deref_mut(&mut self) -> &mut [u8] {
-        self.as_mut_slice()
+        self.expose_as_mut_slice()
     }
 }
 
 impl<const N: usize> AsRef<[u8]> for ArenaFixedBytes<N> {
     fn as_ref(&self) -> &[u8] {
-        self.as_slice()
+        self.expose_as_slice()
     }
 }
 
 impl<const N: usize> Zeroize for ArenaFixedBytes<N> {
     fn zeroize(&mut self) {
-        self.as_mut_slice().zeroize();
+        self.expose_as_mut_slice().zeroize();
     }
 }
 
 impl<const N: usize> PartialEq for ArenaFixedBytes<N> {
     fn eq(&self, other: &Self) -> bool {
-        self.as_slice().ct_eq(other.as_slice()).into()
+        self.expose_as_slice().ct_eq(other.expose_as_slice()).into()
     }
 }
 
@@ -431,7 +445,7 @@ mod tests {
     fn best_effort_arena_is_usable_and_reports_lock_state() {
         let arena = SecretArena::with_capacity_best_effort(4096).unwrap();
         let h = arena.store_fixed::<32>(&[0x5A; 32]).unwrap();
-        assert_eq!(h.as_array(), &[0x5A; 32]);
+        assert_eq!(h.expose_as_array(), &[0x5A; 32]);
         let _ = arena.is_locked();
     }
 
@@ -441,16 +455,16 @@ mod tests {
         let a = arena.random_fixed::<32>().unwrap();
         let b = arena.random_fixed::<32>().unwrap();
         assert_eq!(a.len(), 32);
-        assert_eq!(a.as_array().len(), 32);
-        assert_ne!(a.as_slice(), b.as_slice());
-        assert_ne!(a.as_slice(), [0u8; 32]);
+        assert_eq!(a.expose_as_array().len(), 32);
+        assert_ne!(a.expose_as_slice(), b.expose_as_slice());
+        assert_ne!(a.expose_as_slice(), [0u8; 32]);
     }
 
     #[test]
     fn store_roundtrips() {
         let arena = SecretArena::with_capacity(4096).unwrap();
         let f = arena.store_fixed::<4>(&[1, 2, 3, 4]).unwrap();
-        assert_eq!(f.as_array(), &[1, 2, 3, 4]);
+        assert_eq!(f.expose_as_array(), &[1, 2, 3, 4]);
     }
 
     #[test]
@@ -518,8 +532,12 @@ mod tests {
         let arena = SecretArena::with_capacity(4096).unwrap();
         let (off, leaked) = {
             let s = arena.random_fixed::<32>().unwrap();
-            assert_ne!(s.as_array(), &[0u8; 32], "precondition: secret is random");
-            (s.0.off, *s.as_array())
+            assert_ne!(
+                s.expose_as_array(),
+                &[0u8; 32],
+                "precondition: secret is random"
+            );
+            (s.0.off, *s.expose_as_array())
         };
         let reused = arena.claim(32).unwrap();
         assert_eq!(reused.off, off, "same size class must reuse the freed slot");
@@ -537,10 +555,10 @@ mod tests {
         let mut a = arena.store_fixed::<32>(&[0xAA; 32]).unwrap();
         let b = arena.store_fixed::<32>(&[0xBB; 32]).unwrap();
         assert_ne!(a.0.ptr, b.0.ptr, "two live handles must be disjoint");
-        a.as_mut_slice().fill(0x11);
-        assert_eq!(a.as_array(), &[0x11; 32]);
+        a.expose_as_mut_slice().fill(0x11);
+        assert_eq!(a.expose_as_array(), &[0x11; 32]);
         assert_eq!(
-            b.as_array(),
+            b.expose_as_array(),
             &[0xBB; 32],
             "mutating one handle must not touch the other"
         );
@@ -572,7 +590,7 @@ mod tests {
         let z = arena.store_fixed::<0>(&[0u8; 0]).unwrap();
         assert!(z.is_empty());
         assert_eq!(z.len(), 0);
-        assert_eq!(z.as_array(), &[0u8; 0]);
+        assert_eq!(z.expose_as_array(), &[0u8; 0]);
         assert!(arena.random_fixed::<0>().unwrap().is_empty());
     }
 
@@ -582,7 +600,11 @@ mod tests {
             let arena = SecretArena::with_capacity(4096).unwrap();
             arena.store_fixed::<32>(&[0x5A; 32]).unwrap()
         };
-        assert_eq!(h.as_array(), &[0x5A; 32], "handle valid after arena drop");
+        assert_eq!(
+            h.expose_as_array(),
+            &[0x5A; 32],
+            "handle valid after arena drop"
+        );
         drop(h);
     }
 
@@ -590,7 +612,9 @@ mod tests {
     fn handle_can_move_across_threads() {
         let arena = SecretArena::with_capacity(4096).unwrap();
         let h = arena.store_fixed::<64>(&[0x7E; 64]).unwrap();
-        let out = std::thread::spawn(move || *h.as_array()).join().unwrap();
+        let out = std::thread::spawn(move || *h.expose_as_array())
+            .join()
+            .unwrap();
         assert_eq!(out, [0x7E; 64]);
     }
 
@@ -604,7 +628,7 @@ mod tests {
         let sixteen = arena.store_fixed::<16>(&[0u8; 16]).unwrap();
         assert_eq!(sixteen.0.off, off, "shared size class must reuse the slot");
         assert_eq!(
-            sixteen.as_array(),
+            sixteen.expose_as_array(),
             &[0u8; 16],
             "reused slot must be fully zeroed"
         );
@@ -675,7 +699,7 @@ mod tests {
                 let pattern = [tid.wrapping_add(1); 48];
                 for _ in 0..2000 {
                     let h = arena.store_fixed::<48>(&pattern).unwrap();
-                    assert_eq!(h.as_array(), &pattern);
+                    assert_eq!(h.expose_as_array(), &pattern);
                     drop(h);
                 }
             }));
@@ -699,22 +723,22 @@ mod tests {
         impl H {
             fn as_slice(&self) -> &[u8] {
                 match self {
-                    H::B1(h) => h.as_slice(),
-                    H::B16(h) => h.as_slice(),
-                    H::B17(h) => h.as_slice(),
-                    H::B32(h) => h.as_slice(),
-                    H::B48(h) => h.as_slice(),
-                    H::B64(h) => h.as_slice(),
+                    H::B1(h) => h.expose_as_slice(),
+                    H::B16(h) => h.expose_as_slice(),
+                    H::B17(h) => h.expose_as_slice(),
+                    H::B32(h) => h.expose_as_slice(),
+                    H::B48(h) => h.expose_as_slice(),
+                    H::B64(h) => h.expose_as_slice(),
                 }
             }
             fn as_mut_slice(&mut self) -> &mut [u8] {
                 match self {
-                    H::B1(h) => h.as_mut_slice(),
-                    H::B16(h) => h.as_mut_slice(),
-                    H::B17(h) => h.as_mut_slice(),
-                    H::B32(h) => h.as_mut_slice(),
-                    H::B48(h) => h.as_mut_slice(),
-                    H::B64(h) => h.as_mut_slice(),
+                    H::B1(h) => h.expose_as_mut_slice(),
+                    H::B16(h) => h.expose_as_mut_slice(),
+                    H::B17(h) => h.expose_as_mut_slice(),
+                    H::B32(h) => h.expose_as_mut_slice(),
+                    H::B48(h) => h.expose_as_mut_slice(),
+                    H::B64(h) => h.expose_as_mut_slice(),
                 }
             }
         }

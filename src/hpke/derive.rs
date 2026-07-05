@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Lithium Project
 // SPDX-License-Identifier: AGPL-3.0-only
 
-use ml_kem::{DecapsulationKey1024, Seed, kem::KeyExport};
+use ml_kem::{DecapsulationKey1024, Seed as MlKemSeed, kem::KeyExport};
 
 use x25519_dalek::{PublicKey as XPublicKey, StaticSecret as XStaticSecret};
 
@@ -19,8 +19,9 @@ pub fn derive_keypair(ctx: &Context, ikm: &[u8]) -> Result<(HpkePrivateKey, Hpke
 
     let x_priv = kdf::derive32(&input, None, kp.add("x25519-priv")?.label().as_slice())?;
 
-    let x_pub =
-        PubByte32::new(*XPublicKey::from(&XStaticSecret::from(*x_priv.as_array())).as_bytes());
+    let x_pub = PubByte32::new(
+        *XPublicKey::from(&XStaticSecret::from(*x_priv.expose_as_array())).as_bytes(),
+    );
 
     let k_seed_bytes = kdf::derive_bytes(
         &input,
@@ -33,10 +34,10 @@ pub fn derive_keypair(ctx: &Context, ikm: &[u8]) -> Result<(HpkePrivateKey, Hpke
         return Err(LithiumError::internal("mlkem_seed_len"));
     }
 
-    let mut seed = Seed::default();
-    seed.copy_from_slice(k_seed_bytes.expose_as_slice());
-
-    let dk = DecapsulationKey1024::from_seed(seed);
+    let dk = DecapsulationKey1024::from_seed(
+        MlKemSeed::try_from(k_seed_bytes.expose_as_slice())
+            .map_err(|_| LithiumError::internal("mlkem_seed_len"))?,
+    );
     let ek = dk.encapsulation_key();
     let ek_bytes = ek.to_bytes();
 

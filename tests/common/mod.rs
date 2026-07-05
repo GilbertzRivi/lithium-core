@@ -20,6 +20,6 @@ impl MkProvider for FileMk {
     }
 
     fn store_mk(&self, mk: &SecByte32) -> Result<()> {
-        std::fs::write(&self.path, mk.as_slice()).map_err(LithiumError::io)
+        std::fs::write(&self.path, mk.expose_as_slice()).map_err(LithiumError::io)
     }
 }

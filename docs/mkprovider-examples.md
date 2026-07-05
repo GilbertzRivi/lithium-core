@@ -122,7 +122,7 @@ fn tpm_seal(ctx: &mut Context, mk: &SecByte32) -> Result<(Vec<u8>, Vec<u8>)> {
         .create_primary(Hierarchy::Owner, primary_pub().map_err(tpm_err)?, None, None, None, None)
         .map_err(tpm_err)?;
 
-    let sensitive = SensitiveData::try_from(mk.as_slice().to_vec()).map_err(tpm_err)?;
+    let sensitive = SensitiveData::try_from(mk.expose_as_slice().to_vec()).map_err(tpm_err)?;
     let result = ctx
         .create(primary.key_handle, sealing_pub().map_err(tpm_err)?, None, Some(sensitive), None, None)
         .map_err(tpm_err)?;

@@ -8,13 +8,13 @@ use lithium_core::crypto::{keys, sign};
 struct Keys {
     ed_seed: lithium_core::secrets::SecretFixedBytes<32>,
     ed_pub: lithium_core::public::PubByte32,
-    dili_sk: lithium_core::secrets::SecretBytes,
+    dili_sk: lithium_core::secrets::SecretFixedBytes<32>,
     dili_pub: lithium_core::public::PublicBytes,
 }
 
 fn fresh_keys() -> Keys {
-    let (ed_seed, ed_pub) = keys::random_ed25519_keypair().unwrap();
-    let (dili_sk, dili_pub) = keys::random_dilithium_mldsa87_keypair().unwrap();
+    let (ed_seed, ed_pub) = keys::ephemeral_ed25519_keypair().unwrap();
+    let (dili_sk, dili_pub) = keys::ephemeral_dilithium_mldsa87_keypair().unwrap();
     Keys {
         ed_seed,
         ed_pub,
@@ -24,7 +24,12 @@ fn fresh_keys() -> Keys {
 }
 
 fn sign(k: &Keys, msg: &[u8]) -> DoubleSig {
-    sign::sign_double(msg, k.ed_seed.as_slice(), k.dili_sk.expose_as_slice()).unwrap()
+    sign::sign_double(
+        msg,
+        k.ed_seed.expose_as_slice(),
+        k.dili_sk.expose_as_slice(),
+    )
+    .unwrap()
 }
 
 #[test]

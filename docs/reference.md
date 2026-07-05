@@ -145,18 +145,32 @@ Key-pair and random-material generators. All use the system CSRNG
 ```
 random_fixed::<N>() -> SecretFixedBytes<N>
 random_12() -> Nonce12
-random_32() -> SessionId32
-random_master_key32() -> MasterKey32
+random_32() -> SecByte32
+random_64() -> SecByte64
 
-random_x25519_keypair() -> (SecretFixedBytes<32>, PubByte32)      // (seed_sk, pk)
-random_ed25519_keypair() -> (SecretFixedBytes<32>, PubByte32)     // (seed, pk)
-random_kyber_mlkem1024_keypair() -> (SecretBytes, PublicBytes)    // (sk, pk)
-random_dilithium_mldsa87_keypair() -> (SecretBytes, PublicBytes)  // (sk, pk)
+ephemeral_x25519_keypair() -> (SecByte32, PubByte32)              // (seed_sk, pk)
+ephemeral_ed25519_keypair() -> (SecByte32, PubByte32)             // (seed, pk)
+ephemeral_kyber_mlkem1024_keypair() -> (SecByte64, PublicBytes)   // (sk, pk)
+ephemeral_dilithium_mldsa87_keypair() -> (SecByte32, PublicBytes) // (sk, pk)
+
+// derive the public half from a stored seed
+ed25519_pub_from_seed(seed: &impl SeedBytes<32>) -> PubByte32
+x25519_pub_from_seed(seed: &impl SeedBytes<32>) -> PubByte32
+mldsa87_pub_from_seed(seed: &impl SeedBytes<32>) -> PublicBytes
+mlkem1024_pub_from_seed(seed: &impl SeedBytes<64>) -> PublicBytes
 ```
 
-Each generator returns the secret half in a secret type
-(`SecretFixedBytes`/`SecretBytes`) and the public half in a public
-type (`PubByte32`/`PublicBytes`).
+Each `ephemeral_*` generator returns the secret half in a fixed-size,
+heap-backed secret type (`SecByte32`/`SecByte64`, zeroize-on-drop) and
+the public half in a public type (`PubByte32`/`PublicBytes`). Long-term
+keys are created and held by the `KeyManager` in a locked-memory arena.
+
+`SeedBytes<N>` is a sealed trait implemented only for the fixed-size
+secret types (`SecByte32`/`SecByte64` and `ArenaByte32`/`ArenaByte64`).
+The `*_pub_from_seed` derivations take `&impl SeedBytes<N>`, so a seed
+must arrive as a secret type: a raw `&[u8; N]` is rejected at compile
+time and can never be passed as unprotected bytes. It exposes one
+method, `seed() -> &[u8; N]`, borrowing the bytes without copying.
 
 #### `crypto::kyberbox`: hybrid asymmetric encryption
 
@@ -512,13 +526,16 @@ pub type SecByte64 = SecretFixedBytes<64>;   // Ed25519 signature
 
 Selected methods:
 ```rust
-SecretFixedBytes::new(bytes: [u8; N]) -> Self
+SecretFixedBytes::new(bytes: [u8; N]) -> Self          // moves the array in, then zeroizes it
 SecretFixedBytes::from_slice(slice: &[u8]) -> Result<Self>
+SecretFixedBytes::from_wiped<T: AsMut<[u8]>>(src: T) -> Result<Self>  // copies, then zeroizes the source
+SecretFixedBytes::from_wiped_array(src: &mut [u8; N]) -> Self         // copies, then zeroizes the source in place
 SecretFixedBytes::from_hex(s: &str) -> Result<Self>    // requires lowercase, rejects a 0x prefix
 SecretFixedBytes::new_zeroed() -> Self
 SecretFixedBytes::to_hex() -> SecretString
-SecretFixedBytes::as_array() -> &[u8; N]
-SecretFixedBytes::as_slice() -> &[u8]
+SecretFixedBytes::expose_as_array() -> &[u8; N]
+SecretFixedBytes::expose_as_slice() -> &[u8]
+SecretFixedBytes::expose_into_array() -> Zeroizing<[u8; N]>   // owned, auto-wiped copy
 ```
 
 #### `SecretBytes`
@@ -531,6 +548,7 @@ SecretBytes::from_slice(v: &[u8]) -> Self
 SecretBytes::from_wiped<T: AsMut<[u8]>>(src: T) -> Self   // copies, then zeroizes the source
 SecretBytes::from_hex(s: &str) -> Result<Self>
 SecretBytes::expose_as_slice() -> &[u8]
+SecretBytes::expose_into_array::<N>() -> Result<Zeroizing<[u8; N]>>   // length-checked, auto-wiped
 SecretBytes::to_hex() -> SecretString
 ```
 
@@ -601,10 +619,11 @@ arena.is_locked() -> bool                                      // whether the pa
 arena.random_fixed::<N>() -> Result<ArenaFixedBytes<N>>          // filled from the CSRNG in place
 arena.store_fixed::<N>(&[u8; N]) -> Result<ArenaFixedBytes<N>>   // copy a fixed-size secret in
 arena.store_slice_fixed::<N>(&[u8]) -> Result<ArenaFixedBytes<N>>  // copy a slice, length-checked to N
+arena.store_fixed_wiped::<N, T: AsMut<[u8]>>(src) -> Result<ArenaFixedBytes<N>>  // copy in, then zeroize the source
 
 // ArenaFixedBytes<N> (and aliases ArenaByte32/ArenaByte64): Deref/DerefMut
-//   to [u8], zeroized-and-reused on drop, redacted Debug; as_slice()/
-//   as_mut_slice()/as_array() -> &[u8; N]/len(); ct_eq PartialEq.
+//   to [u8], zeroized-and-reused on drop, redacted Debug; expose_as_slice()/
+//   expose_as_mut_slice()/expose_as_array() -> &[u8; N]/len(); ct_eq PartialEq.
 
 harden_process() -> Result<()>   // opt-in, process-global; per OS:
 //   Linux/Android: PR_SET_DUMPABLE 0 + RLIMIT_CORE 0

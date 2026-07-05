@@ -35,7 +35,7 @@ fn create_private_tmp(path: &Path) -> Result<(fs::File, PathBuf)> {
             "tmp-{:x}-{:x}-{}",
             std::process::id(),
             seq,
-            hex::encode(suffix.as_slice())
+            hex::encode(suffix.expose_as_slice())
         ));
 
         let mut opts = OpenOptions::new();
@@ -104,18 +104,23 @@ fn aad_for(version: u8, key_type: &str) -> Vec<u8> {
 
 #[inline]
 fn derive_kek(mk: &MasterKey32, salt: &[u8; 32]) -> Result<SecByte32> {
-    let hk = Hkdf::<Sha256>::new(Some(salt), mk.as_slice());
+    let hk = Hkdf::<Sha256>::new(Some(salt), mk.expose_as_slice());
     let mut out = SecByte32::new_zeroed();
-    hk.expand(KEYFILE_KEK_INFO, out.as_mut_slice())?;
+    hk.expand(KEYFILE_KEK_INFO, out.expose_as_mut_slice())?;
     Ok(out)
 }
 
 #[inline]
 fn wrap_dek(kek: &SecByte32, dek: &SecByte32, aad: &[u8]) -> Result<(Vec<u8>, [u8; 12])> {
     let nonce = keys::random_fixed::<12>()?;
-    let ct = aead::encrypt_raw(&SecretBytes::from_slice(dek.as_slice()), kek, &nonce, aad)?;
+    let ct = aead::encrypt_raw(
+        &SecretBytes::from_slice(dek.expose_as_slice()),
+        kek,
+        &nonce,
+        aad,
+    )?;
 
-    Ok((ct.as_slice().to_vec(), *nonce.as_array()))
+    Ok((ct.as_slice().to_vec(), *nonce.expose_as_array()))
 }
 
 #[inline]
@@ -123,7 +128,7 @@ fn encrypt_payload(dek: &SecByte32, payload: &[u8], aad: &[u8]) -> Result<(Vec<u
     let nonce = keys::random_fixed::<12>()?;
     let ct = aead::encrypt_raw(&SecretBytes::from_slice(payload), dek, &nonce, aad)?;
 
-    Ok((ct.as_slice().to_vec(), *nonce.as_array()))
+    Ok((ct.as_slice().to_vec(), *nonce.expose_as_array()))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -305,17 +310,17 @@ pub fn save_secret32_encrypted(
 ) -> Result<()> {
     let dek = keys::random_fixed::<32>()?;
     let salt = keys::random_fixed::<32>()?;
-    let kek = derive_kek(mk, salt.as_array())?;
+    let kek = derive_kek(mk, salt.expose_as_array())?;
     let aad = aad_for(KEYFILE_VERSION, key_type);
 
     let (ct_wrap, nonce_wrap) = wrap_dek(&kek, &dek, &aad)?;
-    let (ct_payload, nonce_payload) = encrypt_payload(&dek, payload.as_slice(), &aad)?;
+    let (ct_payload, nonce_payload) = encrypt_payload(&dek, payload.expose_as_slice(), &aad)?;
 
     let out = build_record(
         KEYFILE_VERSION,
         ALG_ID_AES256_GCM_SIV,
         DEK_LEN,
-        salt.as_array(),
+        salt.expose_as_array(),
         &nonce_wrap,
         &ct_wrap,
         &nonce_payload,
@@ -334,7 +339,7 @@ pub fn save_bytes_encrypted(
 ) -> Result<()> {
     let dek = keys::random_fixed::<32>()?;
     let salt = keys::random_fixed::<32>()?;
-    let kek = derive_kek(mk, salt.as_array())?;
+    let kek = derive_kek(mk, salt.expose_as_array())?;
     let aad = aad_for(KEYFILE_VERSION, key_type);
 
     let (ct_wrap, nonce_wrap) = wrap_dek(&kek, &dek, &aad)?;
@@ -344,7 +349,7 @@ pub fn save_bytes_encrypted(
         KEYFILE_VERSION,
         ALG_ID_AES256_GCM_SIV,
         DEK_LEN,
-        salt.as_array(),
+        salt.expose_as_array(),
         &nonce_wrap,
         &ct_wrap,
         &nonce_payload,
@@ -413,14 +418,14 @@ pub fn rewrap_keyfile_dek_to_bytes(
     let dek = unwrap_dek(old_mk, &salt_old, &nonce_wrap_old, &ct_wrap_old, &aad)?;
 
     let salt_new = keys::random_fixed::<32>()?;
-    let kek_new = derive_kek(new_mk, salt_new.as_array())?;
+    let kek_new = derive_kek(new_mk, salt_new.expose_as_array())?;
     let (ct_wrap_new, nonce_wrap_new) = wrap_dek(&kek_new, &dek, &aad)?;
 
     let out = build_record(
         version,
         alg_id,
         dek_len,
-        salt_new.as_array(),
+        salt_new.expose_as_array(),
         &nonce_wrap_new,
         &ct_wrap_new,
         &nonce_payload,

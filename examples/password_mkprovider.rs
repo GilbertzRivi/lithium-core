@@ -56,16 +56,16 @@ impl MkProvider for PasswordMkProvider {
 
     fn store_mk(&self, mk: &SecByte32) -> Result<()> {
         let salt = keys::random_32()?;
-        let kek = self.derive_kek(salt.as_slice())?;
+        let kek = self.derive_kek(salt.expose_as_slice())?;
         let nonce = keys::random_12()?;
         let blob = aead::encrypt(
-            &SecretBytes::from_slice(mk.as_slice()),
+            &SecretBytes::from_slice(mk.expose_as_slice()),
             &kek,
             &nonce,
             WRAP_AAD,
         )?;
         let mut out = Vec::with_capacity(SALT_LEN + blob.len());
-        out.extend_from_slice(salt.as_slice());
+        out.extend_from_slice(salt.expose_as_slice());
         out.extend_from_slice(blob.as_slice());
         std::fs::write(&self.path, &out).map_err(LithiumError::io)
     }

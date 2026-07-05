@@ -7,17 +7,17 @@ use crate::crypto::kyberbox::{prep_base_key_for_decryption, prep_base_key_for_en
 use crate::error::Result;
 use crate::hpke::types::HpkeEnc;
 use crate::public::{PubByte32, PublicBytes};
-use crate::secrets::{SecByte32, SecretBytes};
+use crate::secrets::SecByte32;
 
 pub fn kem_encap(
     ctx: &Context,
     recipient_x_pub: &PubByte32,
     recipient_k_pub: &PublicBytes,
 ) -> Result<(SecByte32, HpkeEnc)> {
-    let (eph_x_priv, eph_x_pub) = keys::random_x25519_keypair()?;
+    let eph_x_priv = keys::random_fixed::<32>()?;
 
     let kem_ctx = ctx.add("hpke")?.add("kem")?;
-    let (shared_secret, kem_ct) =
+    let (shared_secret, kem_ct, eph_x_pub) =
         prep_base_key_for_encryption(&kem_ctx, &eph_x_priv, recipient_x_pub, recipient_k_pub)?;
 
     Ok((
@@ -31,8 +31,8 @@ pub fn kem_encap(
 
 pub fn kem_decap(
     ctx: &Context,
-    recipient_x_priv: &SecByte32,
-    recipient_k_priv: &SecretBytes,
+    recipient_x_priv: impl AsRef<[u8]>,
+    recipient_k_priv: impl AsRef<[u8]>,
     enc: &HpkeEnc,
 ) -> Result<SecByte32> {
     let kem_ctx = ctx.add("hpke")?.add("kem")?;

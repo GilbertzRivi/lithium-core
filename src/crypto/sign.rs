@@ -20,7 +20,7 @@ use ml_dsa::{
 
 pub fn sign_message<S: AsRef<[u8]>>(message: &[u8], priv_ed_seed: S) -> Result<Vec<u8>> {
     let seed = SecByte32::from_slice(priv_ed_seed.as_ref())?;
-    let signing = Ed25519SigningKey::from_bytes(seed.as_array());
+    let signing = Ed25519SigningKey::from_bytes(seed.expose_as_array());
     let sig: Ed25519Signature = signing.sign(message);
 
     Ok(sig.to_bytes().to_vec())

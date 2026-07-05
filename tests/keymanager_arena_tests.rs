@@ -31,8 +31,8 @@ fn arena_backed_signing_keys_sign_and_verify() {
 
     let (ed_sig, dili_sig) = km
         .with_signing_keys(|ed_seed, dili_sk| {
-            let e = sign::sign_message(msg, ed_seed.as_slice())?;
-            let d = sign::sign_message_dili(msg, dili_sk.as_slice())?;
+            let e = sign::sign_message(msg, ed_seed.expose_as_slice())?;
+            let d = sign::sign_message_dili(msg, dili_sk.expose_as_slice())?;
             Ok((e, d))
         })
         .unwrap();
@@ -63,11 +63,9 @@ fn arena_backed_x25519_kyber_load_is_correct() {
     km.with_x25519_and_kyber_sk(|x_seed, kyber_sk| {
         assert_eq!(x_seed.len(), 32);
         assert_eq!(kyber_sk.len(), 64);
-        assert_eq!(keys::x25519_pub_from_seed(x_seed.as_array()), x_pub);
+        assert_eq!(keys::x25519_pub_from_seed(&x_seed), x_pub);
         assert_eq!(
-            keys::mlkem1024_pub_from_seed(kyber_sk.as_slice())
-                .unwrap()
-                .as_slice(),
+            keys::mlkem1024_pub_from_seed(&kyber_sk).as_slice(),
             kyber_pub.as_slice()
         );
         Ok(())

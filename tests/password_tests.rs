@@ -14,7 +14,7 @@ fn export_key(seed: u8) -> SecByte64 {
 #[test]
 fn dek_generate_32_bytes() {
     let dek = generate_dek().unwrap();
-    assert_eq!(dek.as_slice().len(), 32);
+    assert_eq!(dek.expose_as_slice().len(), 32);
 }
 
 #[test]

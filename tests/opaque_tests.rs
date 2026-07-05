@@ -56,13 +56,13 @@ fn full_roundtrip_and_export_key_is_stable() {
     let a = login(&setup, &record, CID, PWD, HANDLER, SERVER).unwrap();
     let b = login(&setup, &record, CID, PWD, HANDLER, SERVER).unwrap();
     assert_eq!(
-        reg_key.as_slice(),
-        a.as_slice(),
+        reg_key.expose_as_slice(),
+        a.expose_as_slice(),
         "login must recover the export key"
     );
     assert_eq!(
-        a.as_slice(),
-        b.as_slice(),
+        a.expose_as_slice(),
+        b.expose_as_slice(),
         "export key is stable across logins"
     );
 }
@@ -74,7 +74,7 @@ fn setup_serialize_roundtrip_preserves_login() {
 
     let setup2 = ServerSetup::deserialize(&setup.serialize()).unwrap();
     let key = login(&setup2, &record, CID, PWD, HANDLER, SERVER).unwrap();
-    assert_eq!(reg_key.as_slice(), key.as_slice());
+    assert_eq!(reg_key.expose_as_slice(), key.expose_as_slice());
 }
 
 #[test]
@@ -82,7 +82,7 @@ fn different_passwords_yield_different_export_keys() {
     let setup = ServerSetup::generate();
     let (_, k1) = register(&setup, CID, PWD);
     let (_, k2) = register(&setup, CID, "Another-Pass-2!");
-    assert_ne!(k1.as_slice(), k2.as_slice());
+    assert_ne!(k1.expose_as_slice(), k2.expose_as_slice());
 }
 
 #[test]

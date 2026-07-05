@@ -7,8 +7,11 @@ audit.
 
 ## Goal
 
-KyberBox encrypts one plaintext (`data`) in one operation. Output: 
-two opaque blobs, `enc_data` and `kem_ct`.
+KyberBox encrypts one plaintext (`data`) in one operation. Output: a
+self-contained `KyberBoxSealed { sender_x_pub, kem_ct, ciphertext }`. Given the
+recipient's own private keys, this is all `open` needs: `sender_x_pub` is the
+sender's ephemeral X25519 public key (`ct_T`), `kem_ct` the ML-KEM ciphertext,
+`ciphertext` the AEAD-sealed payload.
 
 Hybrid by design:
 
@@ -74,7 +77,7 @@ Step 4: Encrypt the payload
            = "{ctx}/data/v1" || 0x00 || aad   (aad non-empty)
   enc_data = [0x01] || nonce || AES-256-GCM-SIV(data, base_key, nonce, data_aad)
 
-Result: KyberBoxSealed { ciphertext = enc_data, kem_ct }
+Result: KyberBoxSealed { sender_x_pub = ct_T, kem_ct, ciphertext = enc_data }
 ```
 
 Notes:
@@ -142,14 +145,15 @@ through `ctx` only works when different uses pick different values.
 Reusing the same `ctx` across unrelated protocols would open 
 cross-protocol attacks.
 
-**The caller passes the sender's ephemeral public key into decrypt 
-correctly.** The caller reads `ct_T` (the sender's ephemeral X25519 
-public key) from its own wire frame and passes it as `peer_pub_x`. 
-That value is bound into the `base_key` `info`. Changing it in 
-transit changes both the ECDH secret and the bound transcript, and 
-the AEAD fails. Attribution to a specific sender stays the caller's 
-job. KyberBox binds the key it was given; it does not check whose 
-key it is.
+**The sender's ephemeral public key travels in the sealed message.**
+`ct_T` (the sender's ephemeral X25519 public key) is carried in
+`KyberBoxSealed::sender_x_pub`, which `open` reads directly. It is bound into
+the `base_key` `info`, so changing it in transit changes both the ECDH secret
+and the bound transcript, and the AEAD fails. This is *not* sender
+authentication: `sender_x_pub` is attacker-supplied like the rest of the wire,
+and KyberBox binds the key it was given without checking whose key it is.
+Attribution to a specific sender stays the caller's job (bind it in `aad`, or
+authenticate at a higher layer).
 
 **The CSRNG is not compromised.** The ephemeral X25519 key, the 
 ML-KEM encapsulation randomness, and all AEAD nonces come from 
@@ -159,20 +163,23 @@ fresh-key-per-message property.
 ## What KyberBox does not guarantee
 
 **Sender authentication.** Nothing in KyberBox ties the ciphertext 
-to a sender. Anyone who knows `peer_k_pub` and `peer_pub_x` (or 
-intercepts `ct_T` in transit) can produce a valid 
-`KyberBoxSealed`. 
+to a sender. `sender_x_pub` is just another attacker-controlled wire 
+field, so anyone who knows the recipient's public keys 
+(`peer_k_pub`, `peer_pub_x`) can produce a valid `KyberBoxSealed` 
+with any ephemeral sender key they like. 
 
 **Replay protection (at the KyberBox level).** A recorded 
 `KyberBoxSealed` resent to the same recipient still passes AEAD. 
 KyberBox binds no counter or state.
 
-**Binding through `base_key`.** `enc_data` and `kem_ct` are 
-independent blobs with no shared MAC. The binding runs through 
-`base_key`: `enc_data` decrypts only when `ss_kem` is recovered from 
-`kem_ct` and the bound transcript matches. Swapping in a field from 
-another message fails AEAD, which reads as transmission corruption, 
-not as a protocol-level signal.
+**Binding through `base_key`.** `sender_x_pub`, `kem_ct` and 
+`enc_data` are separate fields with no shared MAC. The binding runs 
+through `base_key`: it is derived from the ECDH over `sender_x_pub`, 
+from `ss_kem` recovered out of `kem_ct`, and from a transcript that 
+includes `ct_T` and `SHA256(ct_kem)`, so `enc_data` decrypts only 
+when all of them match. Swapping in a field from another message 
+fails AEAD, which reads as transmission corruption, not as a 
+protocol-level signal.
 
 ## Open risks and questions for the auditor
 
@@ -190,7 +197,7 @@ protocols. The auditor should confirm the security proof covers
 this IKM distribution.
 
 **Storing the X25519 private key as a raw seed before clamping.** 
-`random_x25519_keypair` returns and stores `sk_seed`, the 32 bytes 
+`ephemeral_x25519_keypair` returns and stores `sk_seed`, the 32 bytes 
 before clamping, not the clamped scalar. Clamping runs on every use 
 through `XStaticSecret::from(seed_array)`. Correct and consistent 
 in the codebase. Any future code that read the stored bytes 

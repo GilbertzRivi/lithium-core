@@ -8,7 +8,7 @@ use crate::{
     error::Result,
     hpke::{aead::seal, kem::kem_encap, schedule::key_schedule, types::HpkeSealed},
     public::{PubByte32, PublicBytes},
-    secrets::{SecByte32, SecretBytes},
+    secrets::SecretBytes,
 };
 
 pub fn seal_base(
@@ -30,8 +30,8 @@ pub fn seal_base(
 
 pub fn open_base(
     ctx: &Context,
-    recipient_x_priv: &SecByte32,
-    recipient_k_priv: &SecretBytes,
+    recipient_x_priv: impl AsRef<[u8]>,
+    recipient_k_priv: impl AsRef<[u8]>,
     info: &[u8],
     aad: &[u8],
     sealed: &HpkeSealed,

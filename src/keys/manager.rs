@@ -11,7 +11,9 @@ use std::time::{Duration, Instant};
 use crate::crypto::{aead, keys};
 use crate::error::{LithiumError, Result};
 use crate::public::{PubByte32, PublicBytes};
-use crate::secrets::{ArenaByte32, ArenaByte64, MasterKey32, SecByte32, SecretArena, SecretBytes};
+use crate::secrets::{
+    ArenaByte32, ArenaByte64, ArenaFixedBytes, MasterKey32, SecByte32, SecretArena, SecretBytes,
+};
 
 use super::keyfile;
 
@@ -82,7 +84,7 @@ impl MkProvider for InsecurePlaintextMkProvider {
     }
 
     fn store_mk(&self, mk: &SecByte32) -> Result<()> {
-        keyfile::write_secure(&self.path, mk.as_slice())
+        keyfile::write_secure(&self.path, mk.expose_as_slice())
     }
 }
 
@@ -249,14 +251,16 @@ fn ensure_seed_keypair<const N: usize, T: AsRef<[u8]>>(
     mk: &MasterKey32,
     key_type: &'static str,
     policy: PublicCachePolicy,
-    pub_from_seed: impl Fn(&[u8]) -> Result<T>,
+    pub_from_seed: impl Fn(&ArenaFixedBytes<N>) -> T,
 ) -> Result<T> {
     if priv_path.exists() {
-        let seed = keyfile::load_bytes_decrypted(priv_path, mk, key_type)?;
+        let seed = arena.store_fixed_wiped(
+            keyfile::load_bytes_decrypted(priv_path, mk, key_type)?.expose_into_array::<N>()?,
+        )?;
         if seed.len() != N {
             return Err(LithiumError::malformed_keyfile());
         }
-        let pk = pub_from_seed(seed.expose_as_slice())?;
+        let pk = pub_from_seed(&seed);
         reconcile_public_cache(pub_path, pk.as_ref(), policy, key_type)?;
         return Ok(pk);
     }
@@ -273,27 +277,13 @@ fn ensure_seed_keypair<const N: usize, T: AsRef<[u8]>>(
     }
 
     let seed = arena.random_fixed::<N>()?;
-    let pk = pub_from_seed(seed.as_slice())?;
-    keyfile::save_bytes_encrypted(priv_path, mk, seed.as_slice(), key_type)?;
+    let pk = pub_from_seed(&seed);
+    keyfile::save_bytes_encrypted(priv_path, mk, seed.expose_as_slice(), key_type)?;
     keyfile::write_secure(pub_path, pk.as_ref())?;
     if let Some(parent) = pub_path.parent() {
         sync_dir(parent)?;
     }
     Ok(pk)
-}
-
-fn ed25519_pub_from_seed_slice(seed: &[u8]) -> Result<PubByte32> {
-    let arr: &[u8; 32] = seed
-        .try_into()
-        .map_err(|_| LithiumError::invalid_len(32, seed.len()))?;
-    Ok(keys::ed25519_pub_from_seed(arr))
-}
-
-fn x25519_pub_from_seed_slice(seed: &[u8]) -> Result<PubByte32> {
-    let arr: &[u8; 32] = seed
-        .try_into()
-        .map_err(|_| LithiumError::invalid_len(32, seed.len()))?;
-    Ok(keys::x25519_pub_from_seed(arr))
 }
 
 fn label_hex(label: &[u8]) -> String {
@@ -364,7 +354,7 @@ fn ensure_asymmetric_material(
         mk,
         KT_ED_SEED,
         public_cache_policy,
-        ed25519_pub_from_seed_slice,
+        keys::ed25519_pub_from_seed,
     )?;
 
     let x25519 = ensure_seed_keypair::<32, PubByte32>(
@@ -374,7 +364,7 @@ fn ensure_asymmetric_material(
         mk,
         KT_X_SEED,
         public_cache_policy,
-        x25519_pub_from_seed_slice,
+        keys::x25519_pub_from_seed,
     )?;
 
     let kyber = ensure_seed_keypair::<64, PublicBytes>(
@@ -613,7 +603,7 @@ impl<P: MkProvider> Shared<P> {
         sync_dir(&self.rotate_dir)?;
 
         let old_mk = self.mk_provider.load_mk()?;
-        let new_mk = keys::random_master_key32()?;
+        let new_mk = keys::random_32()?;
         let targets = collect_rewrap_targets(&self.root_dir, &self.priv_dir, &self.secrets_dir)?;
 
         let next_old_path = self.rotate_dir.join(ROTATE_NEXT_OLD_FILE);
@@ -733,7 +723,7 @@ impl<P: MkProvider + Send + Sync + 'static> KeyManager<P> {
         match mk_provider.load_mk() {
             Ok(_) => {}
             Err(e) if e.is_not_found() => {
-                let new_mk = keys::random_master_key32()?;
+                let new_mk = keys::random_32()?;
                 mk_provider.store_mk(&new_mk)?;
             }
             Err(e) => return Err(e),
@@ -902,7 +892,10 @@ impl<P: MkProvider + Send + Sync + 'static> KeyManager<P> {
                 &mk,
                 KT_DILI_SK,
             )?;
-            let ed_locked = self.shared.arena.store_fixed::<32>(ed_seed.as_array())?;
+            let ed_locked = self
+                .shared
+                .arena
+                .store_fixed::<32>(ed_seed.expose_as_array())?;
             let dili_locked = self
                 .shared
                 .arena
@@ -929,7 +922,10 @@ impl<P: MkProvider + Send + Sync + 'static> KeyManager<P> {
                 &mk,
                 KT_KYBER_SK,
             )?;
-            let x_locked = self.shared.arena.store_fixed::<32>(x_seed.as_array())?;
+            let x_locked = self
+                .shared
+                .arena
+                .store_fixed::<32>(x_seed.expose_as_array())?;
             let kyber_locked = self
                 .shared
                 .arena

@@ -9,13 +9,14 @@ use libfuzzer_sys::fuzz_target;
 use lithium_core::crypto::keys;
 use lithium_core::crypto::sign::{self, DoubleSig};
 use lithium_core::public::{PubByte32, PublicBytes};
+use lithium_core::secrets::SecByte32;
 
 static PUBKEYS: OnceLock<(PubByte32, PublicBytes)> = OnceLock::new();
 
 fn pubkeys() -> &'static (PubByte32, PublicBytes) {
     PUBKEYS.get_or_init(|| {
-        let ed_pub = keys::ed25519_pub_from_seed(&[7u8; 32]);
-        let dili_pub = keys::mldsa87_pub_from_seed(&[9u8; 32]).unwrap();
+        let ed_pub = keys::ed25519_pub_from_seed(&SecByte32::new([7u8; 32]));
+        let dili_pub = keys::mldsa87_pub_from_seed(&SecByte32::new([9u8; 32]));
         (ed_pub, dili_pub)
     })
 }

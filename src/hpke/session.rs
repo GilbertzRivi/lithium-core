@@ -14,7 +14,7 @@ use crate::{
 };
 
 fn seq_nonce(base: &Nonce12, seq: u64) -> Result<Nonce12> {
-    let mut n = *base.as_array();
+    let mut n = *base.expose_as_array();
     let s = seq.to_be_bytes();
     for i in 0..8 {
         n[4 + i] ^= s[i];

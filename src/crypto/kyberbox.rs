@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 use ml_kem::{
-    Ciphertext as MlKemCiphertext, DecapsulationKey1024, EncapsulationKey1024, MlKem1024, Seed,
-    TryKeyInit,
+    Ciphertext as MlKemCiphertext, DecapsulationKey1024, EncapsulationKey1024, MlKem1024,
+    Seed as MlKemSeed, TryKeyInit,
     kem::{Decapsulate, Encapsulate},
 };
 use sha2::{Digest, Sha256};
@@ -21,17 +21,17 @@ const KYBER_KEM_ID: u8 = 1;
 
 #[derive(Clone, Debug)]
 pub struct KyberBoxSealed {
-    pub ciphertext: PublicBytes,
+    pub sender_x_pub: PubByte32,
     pub kem_ct: PublicBytes,
+    pub ciphertext: PublicBytes,
 }
 
 #[inline]
-fn derive_ecdh_key(
-    priv_x: &SecByte32,
+fn ecdh_kdf(
+    my_secret: &XStaticSecret,
     peer_pub_x: &PubByte32,
     ecdh_label: &PublicBytes,
 ) -> Result<SecByte32> {
-    let my_secret = XStaticSecret::from(*priv_x.as_array());
     let peer_pub = XPublicKey::from(*peer_pub_x.as_array());
     let shared = my_secret.diffie_hellman(&peer_pub);
 
@@ -39,10 +39,8 @@ fn derive_ecdh_key(
         return Err(LithiumError::invalid_public_key("x25519", "low_order"));
     }
 
-    let shared_secret = SecByte32::new(shared.to_bytes());
-
     kdf::derive32(
-        &SecretBytes::from_slice(shared_secret.as_slice()),
+        &SecretBytes::from_slice(shared.as_bytes()),
         None,
         ecdh_label.as_slice(),
     )
@@ -60,8 +58,8 @@ fn derive_base_key(
     ct_pq_hash: &[u8; 32],
     base_label: &PublicBytes,
 ) -> Result<SecByte32> {
-    let ecdh_input = SecretBytes::from_slice(ecdh_key.as_slice());
-    let ss_salt = SecretBytes::from_slice(ss_kem.as_slice());
+    let ecdh_input = SecretBytes::from_slice(ecdh_key.expose_as_slice());
+    let ss_salt = SecretBytes::from_slice(ss_kem.expose_as_slice());
 
     let mut info = base_label.as_slice().to_vec();
     info.extend_from_slice(ct_t);
@@ -78,8 +76,8 @@ fn encapsulate_kem(peer_kyber_pub: &[u8]) -> Result<(SecByte32, [u8; 32], Public
     let (ct_kem, ss) = pk.encapsulate();
 
     let ct_bytes = ct_kem.as_slice();
-    let ss_bytes = SecByte32::from_slice(ss.as_ref())
-        .map_err(|_| LithiumError::internal("mlkem_shared_secret_len"))?;
+    let ss_bytes =
+        SecByte32::from_wiped(ss).map_err(|_| LithiumError::internal("mlkem_shared_secret_len"))?;
 
     let digest = Sha256::digest(ct_bytes);
     let mut ct_hash = [0u8; 32];
@@ -107,20 +105,15 @@ fn decapsulate_kem(kyber_priv_bytes: &[u8], blob: &[u8]) -> Result<(SecByte32, [
     let mut ct_hash = [0u8; 32];
     ct_hash.copy_from_slice(&digest);
 
-    if kyber_priv_bytes.len() != 64 {
-        return Err(LithiumError::invalid_len(64, kyber_priv_bytes.len()));
-    }
-
-    let mut seed = Seed::default();
-    seed.copy_from_slice(kyber_priv_bytes);
-
-    let sk = DecapsulationKey1024::from_seed(seed);
+    let sk = DecapsulationKey1024::from_seed(
+        MlKemSeed::try_from(kyber_priv_bytes)
+            .map_err(|_| LithiumError::invalid_len(64, kyber_priv_bytes.len()))?,
+    );
 
     let ct = MlKemCiphertext::<MlKem1024>::try_from(ct_slice)
         .map_err(|_| LithiumError::kem_invalid_ciphertext())?;
 
-    let ss = sk.decapsulate(&ct);
-    let ss_bytes = SecByte32::from_slice(ss.as_ref())
+    let ss_bytes = SecByte32::from_wiped(sk.decapsulate(&ct))
         .map_err(|_| LithiumError::internal("mlkem_shared_secret_len"))?;
 
     Ok((ss_bytes, ct_hash))
@@ -128,15 +121,17 @@ fn decapsulate_kem(kyber_priv_bytes: &[u8], blob: &[u8]) -> Result<(SecByte32, [
 
 pub(crate) fn prep_base_key_for_encryption(
     ctx: &Context,
-    priv_x: &SecByte32,
+    priv_x: impl AsRef<[u8]>,
     peer_pub_x: &PubByte32,
     peer_k_pub: &PublicBytes,
-) -> Result<(SecByte32, PublicBytes)> {
-    let ecdh_key = derive_ecdh_key(priv_x, peer_pub_x, &ctx.add("ecdh-key")?.label())?;
-
-    let ct_t = *XPublicKey::from(&XStaticSecret::from(*priv_x.as_array())).as_bytes();
+) -> Result<(SecByte32, PublicBytes, PubByte32)> {
+    let priv_x_arr = <&[u8; 32]>::try_from(priv_x.as_ref())
+        .map_err(|_| LithiumError::invalid_len(32, priv_x.as_ref().len()))?;
+    let my_secret = XStaticSecret::from(*priv_x_arr);
+    let ct_t = *XPublicKey::from(&my_secret).as_bytes();
     let ek_t = *peer_pub_x.as_array();
 
+    let ecdh_key = ecdh_kdf(&my_secret, peer_pub_x, &ctx.add("ecdh-key")?.label())?;
     let (ss_kem, ct_hash, kem_ct) = encapsulate_kem(peer_k_pub.as_slice())?;
 
     let base_key = derive_base_key(
@@ -148,22 +143,25 @@ pub(crate) fn prep_base_key_for_encryption(
         &ctx.add("base-key")?.label(),
     )?;
 
-    Ok((base_key, kem_ct))
+    Ok((base_key, kem_ct, PubByte32::new(ct_t)))
 }
 
 pub(crate) fn prep_base_key_for_decryption(
     ctx: &Context,
-    priv_x: &SecByte32,
+    priv_x: impl AsRef<[u8]>,
     peer_pub_x: &PubByte32,
-    kyber_priv: &SecretBytes,
+    kyber_priv: impl AsRef<[u8]>,
     kem_ct: &PublicBytes,
 ) -> Result<SecByte32> {
-    let ecdh_key = derive_ecdh_key(priv_x, peer_pub_x, &ctx.add("ecdh-key")?.label())?;
+    let priv_x_arr = <&[u8; 32]>::try_from(priv_x.as_ref())
+        .map_err(|_| LithiumError::invalid_len(32, priv_x.as_ref().len()))?;
+    let my_secret = XStaticSecret::from(*priv_x_arr);
+    let ecdh_key = ecdh_kdf(&my_secret, peer_pub_x, &ctx.add("ecdh-key")?.label())?;
 
     let ct_t = *peer_pub_x.as_array();
-    let ek_t = *XPublicKey::from(&XStaticSecret::from(*priv_x.as_array())).as_bytes();
+    let ek_t = *XPublicKey::from(&my_secret).as_bytes();
 
-    let (ss_kem, ct_hash) = decapsulate_kem(kyber_priv.expose_as_slice(), kem_ct.as_slice())?;
+    let (ss_kem, ct_hash) = decapsulate_kem(kyber_priv.as_ref(), kem_ct.as_slice())?;
 
     let base_key = derive_base_key(
         &ss_kem,
@@ -179,13 +177,14 @@ pub(crate) fn prep_base_key_for_decryption(
 
 pub fn seal(
     ctx: &Context,
-    priv_x: &SecByte32,
+    priv_x: impl AsRef<[u8]>,
     peer_pub_x: &PubByte32,
     peer_k_pub: &PublicBytes,
     aad: &[u8],
     data: &SecretBytes,
 ) -> Result<KyberBoxSealed> {
-    let (base_key, kem_ct) = prep_base_key_for_encryption(ctx, priv_x, peer_pub_x, peer_k_pub)?;
+    let (base_key, kem_ct, sender_x_pub) =
+        prep_base_key_for_encryption(ctx, priv_x, peer_pub_x, peer_k_pub)?;
     let nonce = keys::random_12()?;
     let ciphertext = aead::encrypt(
         data,
@@ -194,21 +193,24 @@ pub fn seal(
         ctx.add("data")?.bind_aad(aad).as_slice(),
     )?;
 
-    Ok(KyberBoxSealed { ciphertext, kem_ct })
+    Ok(KyberBoxSealed {
+        sender_x_pub,
+        kem_ct,
+        ciphertext,
+    })
 }
 
 pub fn open(
     ctx: &Context,
-    priv_x: &SecByte32,
-    peer_pub_x: &PubByte32,
-    kyber_priv: &SecretBytes,
+    priv_x: impl AsRef<[u8]>,
+    kyber_priv: impl AsRef<[u8]>,
     aad: &[u8],
     kyber_box_sealed: &KyberBoxSealed,
 ) -> Result<SecretBytes> {
     let base_key = prep_base_key_for_decryption(
         ctx,
         priv_x,
-        peer_pub_x,
+        &kyber_box_sealed.sender_x_pub,
         kyber_priv,
         &kyber_box_sealed.kem_ct,
     )?;

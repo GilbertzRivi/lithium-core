@@ -41,11 +41,11 @@ pub fn hkdf_extract(salt: Option<&SecretBytes>, ikm: &SecretBytes) -> SecByte32 
 
     let mut out = [0u8; 32];
     out.copy_from_slice(&prk);
-    SecByte32::new(out)
+    SecByte32::from_wiped_array(&mut out)
 }
 
 pub fn hkdf_expand(prk: &SecByte32, info: &SecretBytes, len: usize) -> Result<SecretBytes> {
-    let hk = Hkdf::<Sha256>::from_prk(prk.as_slice())
+    let hk = Hkdf::<Sha256>::from_prk(prk.expose_as_slice())
         .map_err(|_| LithiumError::internal("hkdf_prk_len"))?;
 
     let mut out = vec![0u8; len];

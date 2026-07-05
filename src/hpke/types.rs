@@ -85,7 +85,7 @@ impl HpkePublicKey {
 impl HpkePrivateKey {
     pub fn to_wire(&self) -> SecretBytes {
         let mut out = Vec::with_capacity(X25519_PRIV_LEN + MLKEM1024_SEED_LEN);
-        out.extend_from_slice(self.x_priv.as_slice());
+        out.extend_from_slice(self.x_priv.expose_as_slice());
         out.extend_from_slice(self.k_priv.expose_as_slice());
         SecretBytes::new(out)
     }

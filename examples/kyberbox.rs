@@ -13,11 +13,13 @@ fn main() -> lithium_core::Result<()> {
     let ctx = Context::base("myapp")?.add("message")?;
 
     // Recipient advertises both a classical and a post-quantum public key.
-    let (recipient_priv_x, recipient_pub_x) = keys::random_x25519_keypair()?;
-    let (recipient_kyber_priv, recipient_kyber_pub) = keys::random_kyber_mlkem1024_keypair()?;
+    let (recipient_priv_x, recipient_pub_x) = keys::ephemeral_x25519_keypair()?;
+    let (recipient_kyber_priv, recipient_kyber_pub) = keys::ephemeral_kyber_mlkem1024_keypair()?;
 
-    // Sender draws a fresh ephemeral X25519 keypair per message.
-    let (sender_priv_x, sender_pub_x) = keys::random_x25519_keypair()?;
+    // Sender draws a fresh ephemeral X25519 keypair per message; its public half
+    // rides inside the sealed message (`wire.sender_x_pub`), so `open` needs no
+    // separate sender key.
+    let (sender_priv_x, _sender_pub_x) = keys::ephemeral_x25519_keypair()?;
 
     let body = SecretBytes::from_slice(b"attack at dawn");
 
@@ -30,14 +32,7 @@ fn main() -> lithium_core::Result<()> {
         &body,
     )?;
 
-    let plain_data = kyberbox::open(
-        &ctx,
-        &recipient_priv_x,
-        &sender_pub_x,
-        &recipient_kyber_priv,
-        b"",
-        &wire,
-    )?;
+    let plain_data = kyberbox::open(&ctx, &recipient_priv_x, &recipient_kyber_priv, b"", &wire)?;
 
     assert_eq!(plain_data.expose_as_slice(), body.expose_as_slice());
 

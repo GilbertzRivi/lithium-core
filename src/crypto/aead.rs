@@ -21,9 +21,9 @@ pub fn encrypt_raw(
     nonce: &SecByte12,
     aad: &[u8],
 ) -> Result<PublicBytes> {
-    let key: &Key<Aes256GcmSiv> = key.as_slice().into();
+    let key: &Key<Aes256GcmSiv> = key.expose_as_slice().into();
 
-    let nonce: &Nonce = nonce.as_slice().into();
+    let nonce: &Nonce = nonce.expose_as_slice().into();
 
     let cipher = Aes256GcmSiv::new(key);
     let ct = cipher.encrypt(
@@ -43,9 +43,9 @@ pub fn decrypt_raw(
     nonce: &SecByte12,
     aad: &[u8],
 ) -> Result<SecretBytes> {
-    let key: &Key<Aes256GcmSiv> = key.as_slice().into();
+    let key: &Key<Aes256GcmSiv> = key.expose_as_slice().into();
 
-    let nonce: &Nonce = nonce.as_slice().into();
+    let nonce: &Nonce = nonce.expose_as_slice().into();
 
     let cipher = Aes256GcmSiv::new(key);
     let pt = cipher.decrypt(
@@ -68,7 +68,7 @@ pub fn encrypt(
     let ct = encrypt_raw(plaintext, key, nonce, aad)?;
     let mut out = Vec::with_capacity(1 + 12 + ct.len());
     out.push(AEAD_BLOB_VERSION);
-    out.extend_from_slice(nonce.as_slice());
+    out.extend_from_slice(nonce.expose_as_slice());
     out.extend_from_slice(ct.as_slice());
     Ok(PublicBytes::new(out))
 }

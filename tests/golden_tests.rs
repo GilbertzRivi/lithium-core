@@ -56,14 +56,14 @@ fn kyberbox_wire_decrypts_to_pinned_plaintext() {
     let msg_x_pub = PubByte32::from_hex(vectors["MSG_X_PUB"]).unwrap();
     let kyber_priv = SecretBytes::from_hex(vectors["KYBER_PRIV"]).unwrap();
     let wire = KyberBoxSealed {
-        ciphertext: PublicBytes::from_hex(vectors["ENC_DATA"]).unwrap(),
+        sender_x_pub: msg_x_pub,
         kem_ct: PublicBytes::from_hex(vectors["KEM_CT"]).unwrap(),
+        ciphertext: PublicBytes::from_hex(vectors["ENC_DATA"]).unwrap(),
     };
 
     let body = kyberbox::open(
         &ctx_of("golden/kyberbox/v1"),
         &rx_x_priv,
-        &msg_x_pub,
         &kyber_priv,
         b"",
         &wire,
@@ -108,9 +108,12 @@ fn hpke_derive_keypair_matches_pinned_vector() {
     let pk_wire = pk.to_wire();
 
     assert_eq!(hex::encode(&pk_wire[..32]), v["KP_X_PUB"]);
-    assert_eq!(hex::encode(sha256(&pk_wire).as_slice()), v["KP_PK_SHA256"]);
     assert_eq!(
-        hex::encode(sha256(sk.to_wire().expose_as_slice()).as_slice()),
+        hex::encode(sha256(&pk_wire).expose_as_slice()),
+        v["KP_PK_SHA256"]
+    );
+    assert_eq!(
+        hex::encode(sha256(sk.to_wire().expose_as_slice()).expose_as_slice()),
         v["KP_SK_SHA256"]
     );
 }

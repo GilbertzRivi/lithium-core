@@ -9,7 +9,7 @@ use crate::{
 };
 
 pub fn key_schedule(ctx: &Context, shared_secret: &SecByte32, info: &[u8]) -> Result<HpkeContext> {
-    let ikm = SecretBytes::from_slice(shared_secret.as_slice());
+    let ikm = SecretBytes::from_slice(shared_secret.expose_as_slice());
     let sched = ctx.add("hpke")?.add("schedule")?;
 
     let key = kdf::derive32(&ikm, None, sched.add("key")?.bind_aad(info).as_slice())?;
@@ -26,7 +26,7 @@ pub fn key_schedule(ctx: &Context, shared_secret: &SecByte32, info: &[u8]) -> Re
         sched.add("exporter-secret")?.bind_aad(info).as_slice(),
     )?;
 
-    let base_nonce = Nonce12::from_slice(&nonce_material.as_slice()[..12])?;
+    let base_nonce = Nonce12::from_slice(&nonce_material.expose_as_slice()[..12])?;
 
     Ok(HpkeContext {
         key,
