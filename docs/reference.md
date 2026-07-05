@@ -393,6 +393,12 @@ with that feature.
 KeyManager::start(base_dir, mk_provider, public_cache_policy, rotation_error_policy) -> Result<KeyManager<P>>
 KeyManager::start_best_effort(base_dir, mk_provider, public_cache_policy, rotation_error_policy) -> Result<KeyManager<P>>
 
+// Full control over the tunable knobs (rotation cadence, locked-arena capacity)
+KeyManagerConfig::new(locking, public_cache_policy)
+    .rotate_every(interval: Duration)   // default KeyManagerConfig::DEFAULT_ROTATE_EVERY (1h)
+    .arena_capacity(bytes: usize)       // default KeyManagerConfig::DEFAULT_ARENA_CAPACITY (8 KiB)
+KeyManager::start_with_config(base_dir, mk_provider, config, rotation_error_policy) -> Result<KeyManager<P>>
+
 #[cfg(feature = "insecure-plaintext-mk")]  // dev/tests only
 KeyManager::start_plain(base_dir, public_cache_policy, rotation_error_policy) -> Result<KeyManager<InsecurePlaintextMkProvider>>
 
@@ -753,22 +759,30 @@ ServerSetup::deserialize(bytes: &[u8]) -> Result<Self>
 ```
 client_registration_start(password) -> (request, ClientRegistrationState)
 server_registration_start(setup, request_bytes, credential_identifier) -> response
-client_registration_finish(state, response_bytes, password, handler, server_id)
+client_registration_finish(state, response_bytes, password, handler, server_id, ksf_params)
     -> (upload, SecByte64)          // SecByte64 = export key
 server_registration_finish(upload_bytes) -> record   // persist per user
 ```
+
+`ksf_params: crypto::kdf::Argon2Params` is the Argon2id cost profile
+(`Argon2Params::default()` is the OWASP baseline). The same params must
+be used at registration and at every later login, or the export key
+changes and login fails; persist your choice.
 
 **Login** (`opaque::client` / `opaque::server`):
 
 ```
 client_login_start(password) -> (request, ClientLoginState)
 server_login_start(setup, record_bytes, request_bytes, credential_identifier,
-                   handler, server_id) -> (response, login_state)
-client_login_finish(state, response_bytes, password, handler, server_id)
+                   handler, server_id, context) -> (response, login_state)
+client_login_finish(state, response_bytes, password, handler, server_id, context, ksf_params)
     -> (finalization, SecByte64)    // same export key as registration
-server_login_finish(login_state, finalization_bytes, handler, server_id) -> ()
+server_login_finish(login_state, finalization_bytes, handler, server_id, context) -> ()
     // Ok(()) means the password matched; Err is InvalidCredentials
 ```
+
+`context: Option<&[u8]>` is optional application context bound into the
+login transcript; it must match on the client and both server calls.
 
 `ClientRegistrationState` / `ClientLoginState` (re-exported at
 `opaque::`) are `opaque-ke` state types carried between the two

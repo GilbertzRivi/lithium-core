@@ -5,7 +5,8 @@ pub mod keyfile;
 pub mod manager;
 
 pub use manager::{
-    KeyManager, MemoryLocking, MkProvider, PublicCachePolicy, PublicKeys, RotationErrorPolicy,
+    KeyManager, KeyManagerConfig, MemoryLocking, MkProvider, PublicCachePolicy, PublicKeys,
+    RotationErrorPolicy,
 };
 
 #[cfg(feature = "insecure-plaintext-mk")]

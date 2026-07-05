@@ -67,6 +67,7 @@ pub fn server_login_start(
     credential_identifier: &[u8],
     handler: &[u8],
     server_id: &[u8],
+    context: Option<&[u8]>,
 ) -> Result<(Vec<u8>, Vec<u8>)> {
     let record = ServerRegistration::<LithiumCipherSuite>::deserialize(record_bytes)
         .map_err(|_| LithiumError::malformed_input("opaque_record"))?;
@@ -74,7 +75,7 @@ pub fn server_login_start(
         .map_err(|_| bad_message())?;
 
     let params = ServerLoginParameters {
-        context: None,
+        context,
         identifiers: identifiers(handler, server_id),
     };
 
@@ -100,6 +101,7 @@ pub fn server_login_finish(
     finalization_bytes: &[u8],
     handler: &[u8],
     server_id: &[u8],
+    context: Option<&[u8]>,
 ) -> Result<()> {
     let state = ServerLogin::<LithiumCipherSuite>::deserialize(state_bytes)
         .map_err(|_| LithiumError::malformed_input("opaque_login_state"))?;
@@ -108,7 +110,7 @@ pub fn server_login_finish(
             .map_err(|_| bad_message())?;
 
     let params = ServerLoginParameters {
-        context: None,
+        context,
         identifiers: identifiers(handler, server_id),
     };
 

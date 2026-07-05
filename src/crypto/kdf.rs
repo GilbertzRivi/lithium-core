@@ -16,6 +16,52 @@ pub(crate) const ARGON2_T_COST: u32 = 3;
 pub(crate) const ARGON2_P_COST: u32 = 1;
 pub(crate) const ARGON2_OUT_LEN: usize = 32;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Argon2Params {
+    m_cost: u32,
+    t_cost: u32,
+    p_cost: u32,
+}
+
+impl Argon2Params {
+    pub const OWASP_DEFAULT: Self = Self {
+        m_cost: ARGON2_M_COST,
+        t_cost: ARGON2_T_COST,
+        p_cost: ARGON2_P_COST,
+    };
+
+    pub fn new(m_cost: u32, t_cost: u32, p_cost: u32) -> Result<Self> {
+        Params::new(m_cost, t_cost, p_cost, Some(ARGON2_OUT_LEN))
+            .map_err(|_| LithiumError::internal("argon2_params"))?;
+        Ok(Self {
+            m_cost,
+            t_cost,
+            p_cost,
+        })
+    }
+
+    pub fn m_cost(&self) -> u32 {
+        self.m_cost
+    }
+    pub fn t_cost(&self) -> u32 {
+        self.t_cost
+    }
+    pub fn p_cost(&self) -> u32 {
+        self.p_cost
+    }
+
+    pub(crate) fn to_params(self, out_len: Option<usize>) -> Result<Params> {
+        Params::new(self.m_cost, self.t_cost, self.p_cost, out_len)
+            .map_err(|_| LithiumError::internal("argon2_params"))
+    }
+}
+
+impl Default for Argon2Params {
+    fn default() -> Self {
+        Self::OWASP_DEFAULT
+    }
+}
+
 pub fn derive32(input: &SecretBytes, salt: Option<&SecretBytes>, info: &[u8]) -> Result<SecByte32> {
     let out = derive_bytes(input, salt, info, 32)?;
     SecByte32::from_slice(out.expose_as_slice())
@@ -55,12 +101,10 @@ pub fn hkdf_expand(prk: &SecByte32, info: &SecretBytes, len: usize) -> Result<Se
 }
 
 pub fn argon2id() -> Result<Argon2<'static>> {
-    let params = Params::new(
-        ARGON2_M_COST,
-        ARGON2_T_COST,
-        ARGON2_P_COST,
-        Some(ARGON2_OUT_LEN),
-    )
-    .map_err(|_| LithiumError::internal("argon2_params"))?;
+    argon2id_with(Argon2Params::OWASP_DEFAULT)
+}
+
+pub fn argon2id_with(params: Argon2Params) -> Result<Argon2<'static>> {
+    let params = params.to_params(Some(ARGON2_OUT_LEN))?;
     Ok(Argon2::new(Algorithm::Argon2id, Version::V0x13, params))
 }

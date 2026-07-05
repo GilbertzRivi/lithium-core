@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 use lithium_core::ErrorKind;
+use lithium_core::crypto::kdf::Argon2Params;
 use lithium_core::opaque::server::ServerSetup;
 use lithium_core::opaque::{client, server};
 use lithium_core::secrets::{SecByte64, SecretString};
@@ -26,8 +27,15 @@ fn is_invalid_credentials(kind: ErrorKind) -> bool {
 fn register(setup: &ServerSetup, cid: &[u8], pwd: &str) -> (Vec<u8>, SecByte64) {
     let (req, cstate) = client::client_registration_start(&ss(pwd)).unwrap();
     let resp = server::server_registration_start(setup, &req, cid).unwrap();
-    let (upload, export_key) =
-        client::client_registration_finish(cstate, &resp, &ss(pwd), HANDLER, SERVER).unwrap();
+    let (upload, export_key) = client::client_registration_finish(
+        cstate,
+        &resp,
+        &ss(pwd),
+        HANDLER,
+        SERVER,
+        Argon2Params::default(),
+    )
+    .unwrap();
     let record = server::server_registration_finish(&upload).unwrap();
     (record, export_key)
 }
@@ -41,10 +49,18 @@ fn login(
     server_id: &[u8],
 ) -> lithium_core::Result<SecByte64> {
     let (req, cstate) = client::client_login_start(&ss(pwd)).unwrap();
-    let (resp, sstate) = server::server_login_start(setup, record, &req, cid, handler, server_id)?;
-    let (finalization, export_key) =
-        client::client_login_finish(cstate, &resp, &ss(pwd), handler, server_id)?;
-    server::server_login_finish(&sstate, &finalization, handler, server_id)?;
+    let (resp, sstate) =
+        server::server_login_start(setup, record, &req, cid, handler, server_id, None)?;
+    let (finalization, export_key) = client::client_login_finish(
+        cstate,
+        &resp,
+        &ss(pwd),
+        handler,
+        server_id,
+        None,
+        Argon2Params::default(),
+    )?;
+    server::server_login_finish(&sstate, &finalization, handler, server_id, None)?;
     Ok(export_key)
 }
 
@@ -154,6 +170,7 @@ fn malformed_login_record_is_malformed_input_not_internal() {
         CID,
         HANDLER,
         SERVER,
+        None,
     )
     .unwrap_err();
     assert!(
@@ -165,8 +182,9 @@ fn malformed_login_record_is_malformed_input_not_internal() {
 
 #[test]
 fn malformed_login_state_is_malformed_input_not_internal() {
-    let err = server::server_login_finish(b"corrupt-state", b"corrupt-final", HANDLER, SERVER)
-        .unwrap_err();
+    let err =
+        server::server_login_finish(b"corrupt-state", b"corrupt-final", HANDLER, SERVER, None)
+            .unwrap_err();
     assert!(
         is_malformed(err.kind),
         "a corrupt login state must not be an internal library bug: {:?}",
@@ -179,21 +197,38 @@ fn malformed_client_wire_messages_are_invalid_credentials() {
     let setup = ServerSetup::generate();
 
     let (_, cstate) = client::client_registration_start(&ss(PWD)).unwrap();
-    let e = client::client_registration_finish(cstate, b"garbage", &ss(PWD), HANDLER, SERVER)
-        .unwrap_err();
+    let e = client::client_registration_finish(
+        cstate,
+        b"garbage",
+        &ss(PWD),
+        HANDLER,
+        SERVER,
+        Argon2Params::default(),
+    )
+    .unwrap_err();
     assert!(is_invalid_credentials(e.kind), "got {:?}", e.kind);
 
     let e = server::server_registration_finish(b"garbage-upload").unwrap_err();
     assert!(is_invalid_credentials(e.kind), "got {:?}", e.kind);
 
     let (_, cstate) = client::client_login_start(&ss(PWD)).unwrap();
-    let e = client::client_login_finish(cstate, b"garbage", &ss(PWD), HANDLER, SERVER).unwrap_err();
+    let e = client::client_login_finish(
+        cstate,
+        b"garbage",
+        &ss(PWD),
+        HANDLER,
+        SERVER,
+        None,
+        Argon2Params::default(),
+    )
+    .unwrap_err();
     assert!(is_invalid_credentials(e.kind), "got {:?}", e.kind);
 
     let (record, _) = register(&setup, CID, PWD);
     let (req, _) = client::client_login_start(&ss(PWD)).unwrap();
     let (_, sstate) =
-        server::server_login_start(&setup, &record, &req, CID, HANDLER, SERVER).unwrap();
-    let e = server::server_login_finish(&sstate, b"garbage-final", HANDLER, SERVER).unwrap_err();
+        server::server_login_start(&setup, &record, &req, CID, HANDLER, SERVER, None).unwrap();
+    let e =
+        server::server_login_finish(&sstate, b"garbage-final", HANDLER, SERVER, None).unwrap_err();
     assert!(is_invalid_credentials(e.kind), "got {:?}", e.kind);
 }

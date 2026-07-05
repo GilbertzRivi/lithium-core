@@ -17,10 +17,6 @@ use crate::secrets::{
 
 use super::keyfile;
 
-const DEFAULT_ROTATE_EVERY: Duration = Duration::from_secs(3600);
-
-const ARENA_CAPACITY: usize = 8 * 1024;
-
 const LOCK_FILE: &str = ".lock";
 
 const PUB_DIR: &str = "pub";
@@ -111,6 +107,38 @@ pub enum PublicCachePolicy {
 pub enum RotationErrorPolicy {
     Strict(Box<dyn Fn(&LithiumError) + Send + Sync>),
     Callback(Box<dyn Fn(&LithiumError) + Send + Sync>),
+}
+
+#[derive(Clone, Debug)]
+pub struct KeyManagerConfig {
+    locking: MemoryLocking,
+    public_cache_policy: PublicCachePolicy,
+    rotate_every: Duration,
+    arena_capacity: usize,
+}
+
+impl KeyManagerConfig {
+    pub const DEFAULT_ROTATE_EVERY: Duration = Duration::from_secs(3600);
+    pub const DEFAULT_ARENA_CAPACITY: usize = 8 * 1024;
+
+    pub fn new(locking: MemoryLocking, public_cache_policy: PublicCachePolicy) -> Self {
+        Self {
+            locking,
+            public_cache_policy,
+            rotate_every: Self::DEFAULT_ROTATE_EVERY,
+            arena_capacity: Self::DEFAULT_ARENA_CAPACITY,
+        }
+    }
+
+    pub fn rotate_every(mut self, interval: Duration) -> Self {
+        self.rotate_every = interval;
+        self
+    }
+
+    pub fn arena_capacity(mut self, bytes: usize) -> Self {
+        self.arena_capacity = bytes;
+        self
+    }
 }
 
 struct WorkerCtl {
@@ -676,11 +704,10 @@ impl<P: MkProvider + Send + Sync + 'static> KeyManager<P> {
         public_cache_policy: PublicCachePolicy,
         rotation_error_policy: RotationErrorPolicy,
     ) -> Result<Self> {
-        Self::start_with_locking(
+        Self::start_with_config(
             base_dir,
             mk_provider,
-            MemoryLocking::Require,
-            public_cache_policy,
+            KeyManagerConfig::new(MemoryLocking::Require, public_cache_policy),
             rotation_error_policy,
         )
     }
@@ -691,22 +718,26 @@ impl<P: MkProvider + Send + Sync + 'static> KeyManager<P> {
         public_cache_policy: PublicCachePolicy,
         rotation_error_policy: RotationErrorPolicy,
     ) -> Result<Self> {
-        Self::start_with_locking(
+        Self::start_with_config(
             base_dir,
             mk_provider,
-            MemoryLocking::BestEffort,
-            public_cache_policy,
+            KeyManagerConfig::new(MemoryLocking::BestEffort, public_cache_policy),
             rotation_error_policy,
         )
     }
 
-    fn start_with_locking(
+    pub fn start_with_config(
         base_dir: &Path,
         mk_provider: P,
-        locking: MemoryLocking,
-        public_cache_policy: PublicCachePolicy,
+        config: KeyManagerConfig,
         rotation_error_policy: RotationErrorPolicy,
     ) -> Result<Self> {
+        let KeyManagerConfig {
+            locking,
+            public_cache_policy,
+            rotate_every,
+            arena_capacity,
+        } = config;
         let root_dir = base_dir.join("KeyManager");
         let pub_dir = root_dir.join(PUB_DIR);
         let priv_dir = root_dir.join(PRIV_DIR);
@@ -740,8 +771,8 @@ impl<P: MkProvider + Send + Sync + 'static> KeyManager<P> {
         let root_mk = mk_provider.load_mk()?;
 
         let arena = match locking {
-            MemoryLocking::Require => SecretArena::with_capacity(ARENA_CAPACITY)?,
-            MemoryLocking::BestEffort => SecretArena::with_capacity_best_effort(ARENA_CAPACITY)?,
+            MemoryLocking::Require => SecretArena::with_capacity(arena_capacity)?,
+            MemoryLocking::BestEffort => SecretArena::with_capacity_best_effort(arena_capacity)?,
         };
         let public_keys =
             ensure_asymmetric_material(&pub_dir, &priv_dir, &root_mk, &arena, public_cache_policy)?;
@@ -760,8 +791,8 @@ impl<P: MkProvider + Send + Sync + 'static> KeyManager<P> {
             poisoned: AtomicBool::new(false),
             ctl: Mutex::new(WorkerCtl {
                 stop: false,
-                rotate_every: DEFAULT_ROTATE_EVERY,
-                next_rotation_at: Instant::now() + DEFAULT_ROTATE_EVERY,
+                rotate_every,
+                next_rotation_at: Instant::now() + rotate_every,
             }),
             signal: Condvar::new(),
             _lock_file: lock_file,

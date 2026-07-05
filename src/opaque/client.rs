@@ -7,6 +7,7 @@ use opaque_ke::{
 };
 use rand_core::OsRng;
 
+use crate::crypto::kdf::Argon2Params;
 use crate::error::{LithiumError, Result};
 use crate::opaque::suite::{
     ClientLoginState, ClientRegistrationState, LithiumCipherSuite, opaque_ksf,
@@ -36,10 +37,11 @@ pub fn client_registration_finish(
     password: &SecretString,
     handler: &[u8],
     server_id: &[u8],
+    ksf_params: Argon2Params,
 ) -> Result<(Vec<u8>, SecByte64)> {
     let response = RegistrationResponse::<LithiumCipherSuite>::deserialize(response_bytes)
         .map_err(|_| LithiumError::invalid_credentials("bad_opaque_message"))?;
-    let ksf = opaque_ksf()?;
+    let ksf = opaque_ksf(ksf_params)?;
     let mut rng = OsRng;
     let res = state
         .finish(
@@ -66,17 +68,19 @@ pub fn client_login_finish(
     password: &SecretString,
     handler: &[u8],
     server_id: &[u8],
+    context: Option<&[u8]>,
+    ksf_params: Argon2Params,
 ) -> Result<(Vec<u8>, SecByte64)> {
     let response = CredentialResponse::<LithiumCipherSuite>::deserialize(response_bytes)
         .map_err(|_| LithiumError::invalid_credentials("bad_opaque_message"))?;
-    let ksf = opaque_ksf()?;
+    let ksf = opaque_ksf(ksf_params)?;
     let mut rng = OsRng;
     let res = state
         .finish(
             &mut rng,
             password.expose().as_bytes(),
             response,
-            ClientLoginFinishParameters::new(None, identifiers(handler, server_id), Some(&ksf)),
+            ClientLoginFinishParameters::new(context, identifiers(handler, server_id), Some(&ksf)),
         )
         .map_err(|_| LithiumError::invalid_credentials("opaque_login_failed"))?;
     let export_key = SecByte64::from_slice(&res.export_key)?;
