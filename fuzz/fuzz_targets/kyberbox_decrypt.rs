@@ -10,7 +10,7 @@ use lithium_core::crypto::context::Context;
 use lithium_core::crypto::keys;
 use lithium_core::crypto::kyberbox::{self, KyberBoxSealed};
 use lithium_core::public::{PubByte32, PublicBytes};
-use lithium_core::secrets::{SecByte32, SecByte64, SecretBytes};
+use lithium_core::secrets::{SecByte32, SecByte64};
 
 static KP: OnceLock<(SecByte32, PubByte32, SecByte64)> = OnceLock::new();
 static CTX: OnceLock<Context<'static>> = OnceLock::new();
