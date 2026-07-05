@@ -12,15 +12,15 @@ pub fn key_schedule(ctx: &Context, shared_secret: &SecByte32, info: &[u8]) -> Re
     let ikm = SecretBytes::from_slice(shared_secret.expose_as_slice());
     let sched = ctx.add("hpke")?.add("schedule")?;
 
-    let key = kdf::derive32(&ikm, None, sched.add("key")?.bind_aad(info).as_slice())?;
+    let key = kdf::derive32_raw(&ikm, None, sched.add("key")?.bind_aad(info).as_slice())?;
 
-    let nonce_material = kdf::derive32(
+    let nonce_material = kdf::derive32_raw(
         &ikm,
         None,
         sched.add("base-nonce")?.bind_aad(info).as_slice(),
     )?;
 
-    let exporter_secret = kdf::derive32(
+    let exporter_secret = kdf::derive32_raw(
         &ikm,
         None,
         sched.add("exporter-secret")?.bind_aad(info).as_slice(),

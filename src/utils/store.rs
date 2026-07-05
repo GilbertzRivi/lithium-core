@@ -7,8 +7,17 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use crate::crypto::context::Context;
+use crate::crypto::{aead, keys};
 use crate::error::{LithiumError, Result};
+use crate::public::PublicBytes;
+use crate::secrets::SecByte32;
+use crate::secrets::arena::{ArenaByte32, SecretArena};
 use crate::secrets::bytes::SecretBytes;
+
+fn store_ctx() -> Result<Context<'static>> {
+    Context::base("lithium")?.add("ephemeral-store")
+}
 
 #[derive(Clone)]
 pub struct EphemeralStoreManager {
@@ -19,6 +28,7 @@ pub struct EphemeralStoreManager {
 struct Shared {
     inner: Mutex<StoreInner>,
     signal: Condvar,
+    key: ArenaByte32,
 }
 
 struct CleanupGuard {
@@ -28,9 +38,11 @@ struct CleanupGuard {
 
 impl Drop for CleanupGuard {
     fn drop(&mut self) {
-        if let Ok(mut guard) = self.shared.inner.lock() {
-            guard.stop = true;
-        }
+        self.shared
+            .inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .stop = true;
         self.shared.signal.notify_all();
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
@@ -84,9 +96,12 @@ impl Eq for HeapEntry {}
 
 impl EphemeralStoreManager {
     pub fn new() -> Result<Self> {
+        let arena = SecretArena::with_capacity_best_effort(4096)?;
+        let key = arena.random_fixed::<32>()?;
         let shared = Arc::new(Shared {
             inner: Mutex::new(StoreInner::default()),
             signal: Condvar::new(),
+            key,
         });
         let worker = shared.clone();
         let handle = thread::Builder::new()
@@ -155,6 +170,23 @@ impl EphemeralStoreManager {
         Ok(v)
     }
 
+    fn seal(&self, hkey: &str, value: &SecretBytes) -> Result<SecretBytes> {
+        let key = SecByte32::from_slice(self.shared.key.expose_as_slice())?;
+        let nonce = keys::random_12()?;
+        let blob = aead::encrypt(value, &key, &nonce, &store_ctx()?, hkey.as_bytes())?;
+        Ok(SecretBytes::from_slice(blob.as_slice()))
+    }
+
+    fn unseal(&self, hkey: &str, blob: &SecretBytes) -> Result<SecretBytes> {
+        let key = SecByte32::from_slice(self.shared.key.expose_as_slice())?;
+        aead::decrypt(
+            &PublicBytes::from_slice(blob.expose_as_slice()),
+            &key,
+            &store_ctx()?,
+            hkey.as_bytes(),
+        )
+    }
+
     pub fn set(&self, key: &str, value: SecretBytes, ttl: Duration) -> Result<()> {
         if ttl.is_zero() {
             return Ok(());
@@ -163,13 +195,15 @@ impl EphemeralStoreManager {
         let expires_at = now
             .checked_add(ttl)
             .ok_or_else(LithiumError::ttl_too_large)?;
+        let hkey = hash_sha256_hex(key.as_bytes());
+        let ciphertext = self.seal(&hkey, &value)?;
         let mut guard = self.lock()?;
         Self::sweep_expired(&mut guard, now);
         let ver = Self::next_version(&mut guard)?;
         guard.map.insert(
-            key.to_owned(),
+            hkey.clone(),
             StoreEntry {
-                ciphertext: value,
+                ciphertext,
                 expires_at,
                 version: ver,
             },
@@ -177,7 +211,7 @@ impl EphemeralStoreManager {
         guard.heap.push(HeapEntry {
             expires_at,
             version: ver,
-            key: key.to_owned(),
+            key: hkey,
         });
         self.shared.signal.notify_one();
         Ok(())
@@ -191,18 +225,20 @@ impl EphemeralStoreManager {
         let expires_at = now
             .checked_add(ttl)
             .ok_or_else(LithiumError::ttl_too_large)?;
+        let hkey = hash_sha256_hex(key.as_bytes());
+        let ciphertext = self.seal(&hkey, &value)?;
         let mut guard = self.lock()?;
         Self::sweep_expired(&mut guard, now);
-        if let Some(e) = guard.map.get(key)
+        if let Some(e) = guard.map.get(&hkey)
             && e.expires_at > now
         {
             return Ok(false);
         }
         let ver = Self::next_version(&mut guard)?;
         guard.map.insert(
-            key.to_owned(),
+            hkey.clone(),
             StoreEntry {
-                ciphertext: value,
+                ciphertext,
                 expires_at,
                 version: ver,
             },
@@ -210,7 +246,7 @@ impl EphemeralStoreManager {
         guard.heap.push(HeapEntry {
             expires_at,
             version: ver,
-            key: key.to_owned(),
+            key: hkey,
         });
         self.shared.signal.notify_one();
         Ok(true)
@@ -218,32 +254,40 @@ impl EphemeralStoreManager {
 
     pub fn peek(&self, key: &str) -> Result<Option<SecretBytes>> {
         let now = Instant::now();
+        let hkey = hash_sha256_hex(key.as_bytes());
         let mut guard = self.lock()?;
-        if let Some(entry) = guard.map.get(key) {
-            if entry.expires_at <= now {
-                let _ = guard.map.remove(key);
-                return Ok(None);
-            }
-            return Ok(Some(entry.ciphertext.clone()));
-        }
-        Ok(None)
+        let blob = match guard.map.get(&hkey) {
+            Some(entry) if entry.expires_at > now => Some(entry.ciphertext.clone()),
+            Some(_) => None,
+            None => return Ok(None),
+        };
+        let Some(blob) = blob else {
+            guard.map.remove(&hkey);
+            return Ok(None);
+        };
+        drop(guard);
+        Ok(Some(self.unseal(&hkey, &blob)?))
     }
 
     pub fn take(&self, key: &str) -> Result<Option<SecretBytes>> {
         let now = Instant::now();
+        let hkey = hash_sha256_hex(key.as_bytes());
         let mut guard = self.lock()?;
-        let Some(entry) = guard.map.remove(key) else {
+        let Some(entry) = guard.map.remove(&hkey) else {
             return Ok(None);
         };
         if entry.expires_at <= now {
             return Ok(None);
         }
-        Ok(Some(entry.ciphertext))
+        let blob = entry.ciphertext;
+        drop(guard);
+        Ok(Some(self.unseal(&hkey, &blob)?))
     }
 
     pub fn del(&self, key: &str) -> Result<()> {
+        let hkey = hash_sha256_hex(key.as_bytes());
         let mut guard = self.lock()?;
-        guard.map.remove(key);
+        guard.map.remove(&hkey);
         Ok(())
     }
 }
@@ -278,9 +322,47 @@ mod tests {
 
         let guard = store.shared.inner.lock().unwrap();
         assert!(
-            !guard.map.contains_key("short"),
+            !guard.map.contains_key(&hash_sha256_hex(b"short")),
             "short-TTL entry must be scrubbed by the background thread without any access"
         );
-        assert!(guard.map.contains_key("long"), "long-TTL entry must remain");
+        assert!(
+            guard.map.contains_key(&hash_sha256_hex(b"long")),
+            "long-TTL entry must remain"
+        );
+    }
+
+    #[test]
+    fn value_is_encrypted_at_rest() {
+        let store = EphemeralStoreManager::new().unwrap();
+        let plaintext = b"super-secret-value";
+        store
+            .set("k", sb(plaintext), Duration::from_secs(60))
+            .unwrap();
+
+        let guard = store.shared.inner.lock().unwrap();
+        let entry = guard.map.get(&hash_sha256_hex(b"k")).unwrap();
+        let stored = entry.ciphertext.expose_as_slice();
+        assert!(
+            !stored.windows(plaintext.len()).any(|w| w == plaintext),
+            "plaintext must not appear in the at-rest ciphertext"
+        );
+    }
+
+    #[test]
+    fn roundtrips_through_peek_and_take() {
+        let store = EphemeralStoreManager::new().unwrap();
+        store
+            .set("k", sb(b"value"), Duration::from_secs(60))
+            .unwrap();
+
+        assert_eq!(
+            store.peek("k").unwrap().unwrap().expose_as_slice(),
+            b"value"
+        );
+        assert_eq!(
+            store.take("k").unwrap().unwrap().expose_as_slice(),
+            b"value"
+        );
+        assert!(store.peek("k").unwrap().is_none());
     }
 }

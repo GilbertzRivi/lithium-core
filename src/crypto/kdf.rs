@@ -6,6 +6,7 @@ use hkdf::Hkdf;
 use sha2::Sha256;
 
 use crate::{
+    crypto::context::Context,
     error::{LithiumError, Result},
     secrets::SecByte32,
     secrets::bytes::SecretBytes,
@@ -62,12 +63,35 @@ impl Default for Argon2Params {
     }
 }
 
-pub fn derive32(input: &SecretBytes, salt: Option<&SecretBytes>, info: &[u8]) -> Result<SecByte32> {
-    let out = derive_bytes(input, salt, info, 32)?;
-    SecByte32::from_slice(out.expose_as_slice())
+pub fn derive32(
+    input: &SecretBytes,
+    salt: Option<&SecretBytes>,
+    ctx: &Context,
+    aad: &[u8],
+) -> Result<SecByte32> {
+    derive32_raw(input, salt, ctx.bind_aad(aad).as_slice())
 }
 
 pub fn derive_bytes(
+    input: &SecretBytes,
+    salt: Option<&SecretBytes>,
+    ctx: &Context,
+    aad: &[u8],
+    len: usize,
+) -> Result<SecretBytes> {
+    derive_bytes_raw(input, salt, ctx.bind_aad(aad).as_slice(), len)
+}
+
+pub(crate) fn derive32_raw(
+    input: &SecretBytes,
+    salt: Option<&SecretBytes>,
+    info: &[u8],
+) -> Result<SecByte32> {
+    let out = derive_bytes_raw(input, salt, info, 32)?;
+    SecByte32::from_slice(out.expose_as_slice())
+}
+
+pub(crate) fn derive_bytes_raw(
     input: &SecretBytes,
     salt: Option<&SecretBytes>,
     info: &[u8],

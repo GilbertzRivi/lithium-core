@@ -63,6 +63,15 @@ fn enc_flip(enc: &HpkeEnc, idx: usize) -> HpkeEnc {
     HpkeEnc::from_wire(&w).unwrap()
 }
 
+fn reseal(enc: &HpkeEnc, ct: &[u8]) -> HpkeSealed {
+    let ew = enc.to_wire();
+    let mut w = Vec::with_capacity(4 + ew.len() + ct.len());
+    w.extend_from_slice(&(ew.len() as u32).to_be_bytes());
+    w.extend_from_slice(&ew);
+    w.extend_from_slice(ct);
+    HpkeSealed::from_wire(&w).unwrap()
+}
+
 #[test]
 fn seal_open_roundtrip() {
     let (sk, pk) = kp(CTX, b"seed-a");
@@ -154,12 +163,9 @@ fn open_wrong_recipient_fails() {
 fn open_tampered_ciphertext_fails() {
     let (sk, pk) = kp(CTX, b"s");
     let sealed = seal(&pk, CTX, INFO, AAD, b"tamper-me");
-    let mut ct = sealed.ciphertext.as_slice().to_vec();
+    let mut ct = sealed.ciphertext().as_slice().to_vec();
     ct[0] ^= 0x01;
-    let bad = HpkeSealed {
-        enc: sealed.enc.clone(),
-        ciphertext: PublicBytes::new(ct),
-    };
+    let bad = reseal(sealed.enc(), &ct);
     assert!(open(&sk, CTX, INFO, AAD, &bad).is_err());
 }
 
@@ -167,10 +173,7 @@ fn open_tampered_ciphertext_fails() {
 fn open_tampered_enc_xpub_fails() {
     let (sk, pk) = kp(CTX, b"s");
     let sealed = seal(&pk, CTX, INFO, AAD, b"m");
-    let bad = HpkeSealed {
-        enc: enc_flip(&sealed.enc, 0),
-        ciphertext: sealed.ciphertext.clone(),
-    };
+    let bad = reseal(&enc_flip(sealed.enc(), 0), sealed.ciphertext().as_slice());
     assert!(open(&sk, CTX, INFO, AAD, &bad).is_err());
 }
 
@@ -178,10 +181,7 @@ fn open_tampered_enc_xpub_fails() {
 fn open_tampered_enc_kemct_fails() {
     let (sk, pk) = kp(CTX, b"s");
     let sealed = seal(&pk, CTX, INFO, AAD, b"m");
-    let bad = HpkeSealed {
-        enc: enc_flip(&sealed.enc, 40),
-        ciphertext: sealed.ciphertext.clone(),
-    };
+    let bad = reseal(&enc_flip(sealed.enc(), 40), sealed.ciphertext().as_slice());
     assert!(open(&sk, CTX, INFO, AAD, &bad).is_err());
 }
 
@@ -189,24 +189,31 @@ fn open_tampered_enc_kemct_fails() {
 fn open_empty_ciphertext_fails() {
     let (sk, pk) = kp(CTX, b"s");
     let sealed = seal(&pk, CTX, INFO, AAD, b"m");
-    let bad = HpkeSealed {
-        enc: sealed.enc.clone(),
-        ciphertext: PublicBytes::new(vec![]),
-    };
+    let bad = reseal(sealed.enc(), &[]);
     assert!(open(&sk, CTX, INFO, AAD, &bad).is_err());
 }
 
 #[test]
-fn open_truncated_kem_ct_fails() {
-    let (sk, pk) = kp(CTX, b"s");
+fn truncated_enc_is_rejected_on_parse() {
+    let (_sk, pk) = kp(CTX, b"s");
     let sealed = seal(&pk, CTX, INFO, AAD, b"m");
-    let mut w = sealed.enc.to_wire();
+    let mut w = sealed.enc().to_wire();
     w.truncate(w.len() - 100);
-    let bad = HpkeSealed {
-        enc: HpkeEnc::from_wire(&w).unwrap(),
-        ciphertext: sealed.ciphertext.clone(),
-    };
-    assert!(open(&sk, CTX, INFO, AAD, &bad).is_err());
+    assert!(
+        HpkeEnc::from_wire(&w).is_err(),
+        "a truncated enc must be rejected on parse"
+    );
+}
+
+#[test]
+fn sealed_wire_roundtrips() {
+    let (_sk, pk) = kp(CTX, b"s");
+    let sealed = seal(&pk, CTX, INFO, AAD, b"roundtrip");
+    let wire = sealed.to_wire();
+    let back = HpkeSealed::from_wire(&wire).unwrap();
+    assert_eq!(back.to_wire(), wire);
+    assert_eq!(back.enc().to_wire(), sealed.enc().to_wire());
+    assert_eq!(back.ciphertext().as_slice(), sealed.ciphertext().as_slice());
 }
 
 #[test]
@@ -214,8 +221,8 @@ fn seal_is_randomized() {
     let (_, pk) = kp(CTX, b"s");
     let a = seal(&pk, CTX, INFO, AAD, b"same-plaintext");
     let b = seal(&pk, CTX, INFO, AAD, b"same-plaintext");
-    assert_ne!(a.enc.to_wire(), b.enc.to_wire());
-    assert_ne!(a.ciphertext.as_slice(), b.ciphertext.as_slice());
+    assert_ne!(a.enc().to_wire(), b.enc().to_wire());
+    assert_ne!(a.ciphertext().as_slice(), b.ciphertext().as_slice());
 }
 
 #[test]
@@ -344,18 +351,19 @@ fn info_with_null_bytes_still_separates() {
 fn enc_wire_roundtrip() {
     let (_, pk) = kp(CTX, b"s");
     let sealed = seal(&pk, CTX, INFO, AAD, b"m");
-    let w = sealed.enc.to_wire();
+    let w = sealed.enc().to_wire();
     let back = HpkeEnc::from_wire(&w).unwrap();
     assert_eq!(back.to_wire(), w);
 }
 
 #[test]
-fn enc_from_wire_rejects_len_at_or_below_xpub() {
+fn enc_from_wire_requires_exact_len() {
+    let exact = 32 + 1568 + 2;
     assert!(HpkeEnc::from_wire(&[]).is_err());
     assert!(HpkeEnc::from_wire(&[0u8; 32]).is_err());
-    // 33 bytes is the minimum accepted (1-byte kem_ct); parsing succeeds even
-    // though decap will later reject it.
-    assert!(HpkeEnc::from_wire(&[0u8; 33]).is_ok());
+    assert!(HpkeEnc::from_wire(&vec![0u8; exact - 1]).is_err());
+    assert!(HpkeEnc::from_wire(&vec![0u8; exact + 1]).is_err());
+    assert!(HpkeEnc::from_wire(&vec![0u8; exact]).is_ok());
 }
 
 #[test]
@@ -399,12 +407,7 @@ fn full_wire_interop_seal_open() {
     let (x_pub, k_pub) = pub_raw(&pk);
     let sealed = hpke::seal_base(&ctx_of(CTX), &x_pub, &k_pub, INFO, AAD, &sb(b"wire")).unwrap();
 
-    let enc = HpkeEnc::from_wire(&sealed.enc.to_wire()).unwrap();
-    let ct = PublicBytes::new(sealed.ciphertext.as_slice().to_vec());
-    let sealed = HpkeSealed {
-        enc,
-        ciphertext: ct,
-    };
+    let sealed = HpkeSealed::from_wire(&sealed.to_wire()).unwrap();
 
     let sk = HpkePrivateKey::from_wire(sk.to_wire().expose_as_slice()).unwrap();
     let pt = open(&sk, CTX, INFO, AAD, &sealed).unwrap();

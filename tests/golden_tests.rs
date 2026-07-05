@@ -7,7 +7,7 @@ use lithium_core::crypto::hash::sha256;
 use lithium_core::crypto::kyberbox::KyberBoxSealed;
 use lithium_core::crypto::{Context, aead, kyberbox, sign};
 use lithium_core::hpke::{self, HpkeEnc, HpkeSealed};
-use lithium_core::public::{PubByte32, PublicBytes};
+use lithium_core::public::PublicBytes;
 use lithium_core::secrets::{SecByte32, SecretBytes};
 
 fn ctx_of(s: &str) -> Context<'_> {
@@ -17,6 +17,14 @@ fn ctx_of(s: &str) -> Context<'_> {
         c = c.add(p).unwrap();
     }
     c
+}
+
+fn sealed_from_parts(enc_wire: &[u8], ct: &[u8]) -> HpkeSealed {
+    let mut w = Vec::with_capacity(4 + enc_wire.len() + ct.len());
+    w.extend_from_slice(&(enc_wire.len() as u32).to_be_bytes());
+    w.extend_from_slice(enc_wire);
+    w.extend_from_slice(ct);
+    HpkeSealed::from_wire(&w).unwrap()
 }
 
 fn hpke_vectors() -> HashMap<&'static str, &'static str> {
@@ -33,16 +41,17 @@ fn aead_blob_decrypts_to_pinned_plaintext() {
             .unwrap();
     let aad = b"golden-aad-v1";
     let blob = PublicBytes::from_hex(
-        "01a14b7e02c9d3f5081623ab9cf124d1138aab1944639ca1eae2f7c84bb0709ee5c22d2d4ccfba979e3e91a7eb2507a6604e1a5da8",
+        "01a14b7e02c9d3f5081623ab9c05857d7c1ae77e0e52020ec0b973f4875a55aaf5d2299ac47ece5eb4392c621cedaa04bdc80282f1",
     )
     .unwrap();
 
-    let pt = aead::decrypt(&blob, &key, aad).unwrap();
+    let ctx = ctx_of("golden/aead/v1");
+    let pt = aead::decrypt(&blob, &key, &ctx, aad).unwrap();
     assert_eq!(pt.expose_as_slice(), b"golden-aead-plaintext-v1");
 
     let mut tampered = blob.as_slice().to_vec();
     *tampered.last_mut().unwrap() ^= 0x01;
-    assert!(aead::decrypt(&PublicBytes::new(tampered), &key, aad).is_err());
+    assert!(aead::decrypt(&PublicBytes::new(tampered), &key, &ctx, aad).is_err());
 }
 
 #[test]
@@ -53,13 +62,12 @@ fn kyberbox_wire_decrypts_to_pinned_plaintext() {
         .collect();
 
     let rx_x_priv = SecByte32::from_hex(vectors["RX_X_PRIV"]).unwrap();
-    let msg_x_pub = PubByte32::from_hex(vectors["MSG_X_PUB"]).unwrap();
     let kyber_priv = SecretBytes::from_hex(vectors["KYBER_PRIV"]).unwrap();
-    let wire = KyberBoxSealed {
-        sender_x_pub: msg_x_pub,
-        kem_ct: PublicBytes::from_hex(vectors["KEM_CT"]).unwrap(),
-        ciphertext: PublicBytes::from_hex(vectors["ENC_DATA"]).unwrap(),
-    };
+    let mut wire_bytes = Vec::new();
+    wire_bytes.extend_from_slice(&hex::decode(vectors["MSG_X_PUB"]).unwrap());
+    wire_bytes.extend_from_slice(&hex::decode(vectors["KEM_CT"]).unwrap());
+    wire_bytes.extend_from_slice(&hex::decode(vectors["ENC_DATA"]).unwrap());
+    let wire = KyberBoxSealed::from_wire(&wire_bytes).unwrap();
 
     let body = kyberbox::open(
         &ctx_of("golden/kyberbox/v1"),
@@ -87,15 +95,18 @@ fn mldsa87_signature_verifies_pinned_vector() {
     assert_eq!(dili_pub.as_slice().len(), 2592);
     assert_eq!(dili_sig.as_slice().len(), 4627);
 
+    let ctx = ctx_of("golden/mldsa/v1");
     assert!(sign::verify_signature_dili(
         msg,
         dili_sig.as_slice(),
-        &dili_pub
+        &dili_pub,
+        &ctx
     ));
     assert!(!sign::verify_signature_dili(
         b"tampered",
         dili_sig.as_slice(),
-        &dili_pub
+        &dili_pub,
+        &ctx
     ));
 }
 
@@ -130,10 +141,10 @@ fn hpke_sealed_opens_to_pinned_plaintext() {
 
     let info = hex::decode(v["INFO"]).unwrap();
     let aad = hex::decode(v["AAD"]).unwrap();
-    let sealed = HpkeSealed {
-        enc: HpkeEnc::from_wire(&hex::decode(v["ENC"]).unwrap()).unwrap(),
-        ciphertext: PublicBytes::from_hex(v["CIPHERTEXT"]).unwrap(),
-    };
+    let sealed = sealed_from_parts(
+        &hex::decode(v["ENC"]).unwrap(),
+        &hex::decode(v["CIPHERTEXT"]).unwrap(),
+    );
 
     let pt = hpke::open_base(
         &ctx_of(v["SEAL_CTX"]),
@@ -149,12 +160,9 @@ fn hpke_sealed_opens_to_pinned_plaintext() {
         hex::decode(v["PLAINTEXT"]).unwrap().as_slice()
     );
 
-    let mut ct = sealed.ciphertext.as_slice().to_vec();
+    let mut ct = sealed.ciphertext().as_slice().to_vec();
     *ct.last_mut().unwrap() ^= 0x01;
-    let tampered = HpkeSealed {
-        enc: sealed.enc.clone(),
-        ciphertext: PublicBytes::new(ct),
-    };
+    let tampered = sealed_from_parts(&sealed.enc().to_wire(), &ct);
     assert!(
         hpke::open_base(
             &ctx_of(v["SEAL_CTX"]),

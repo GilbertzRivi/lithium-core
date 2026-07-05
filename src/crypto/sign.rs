@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 use crate::{
+    crypto::context::Context,
     error::{LithiumError, Result},
     public::{PubByte32, PublicBytes},
     secrets::SecByte32,
@@ -18,15 +19,26 @@ use ml_dsa::{
     signature::{SignatureEncoding, Signer as MlDsaSigner, Verifier as MlDsaVerifier},
 };
 
-pub fn sign_message<S: AsRef<[u8]>>(message: &[u8], priv_ed_seed: S) -> Result<Vec<u8>> {
+const MLDSA87_SIG_LEN: usize = 4627;
+
+pub fn sign_message<S: AsRef<[u8]>>(
+    message: &[u8],
+    priv_ed_seed: S,
+    ctx: &Context,
+) -> Result<Vec<u8>> {
     let seed = SecByte32::from_slice(priv_ed_seed.as_ref())?;
     let signing = Ed25519SigningKey::from_bytes(seed.expose_as_array());
-    let sig: Ed25519Signature = signing.sign(message);
+    let sig: Ed25519Signature = signing.sign(ctx.bind_aad(message).as_slice());
 
     Ok(sig.to_bytes().to_vec())
 }
 
-pub fn verify_signature(message: &[u8], signature: &[u8], pub_key: &PubByte32) -> bool {
+pub fn verify_signature(
+    message: &[u8],
+    signature: &[u8],
+    pub_key: &PubByte32,
+    ctx: &Context,
+) -> bool {
     if signature.len() != 64 {
         return false;
     }
@@ -41,14 +53,19 @@ pub fn verify_signature(message: &[u8], signature: &[u8], pub_key: &PubByte32) -
         Err(_) => return false,
     };
 
-    pk.verify_strict(message, &sig).is_ok()
+    pk.verify_strict(ctx.bind_aad(message).as_slice(), &sig)
+        .is_ok()
 }
 
-pub fn sign_message_dili<S: AsRef<[u8]>>(message: &[u8], dili_sk_bytes: S) -> Result<Vec<u8>> {
+pub fn sign_message_dili<S: AsRef<[u8]>>(
+    message: &[u8],
+    dili_sk_bytes: S,
+    ctx: &Context,
+) -> Result<Vec<u8>> {
     let sk = MlDsaSigningKey::<MlDsa87>::new_from_slice(dili_sk_bytes.as_ref())
         .map_err(|_| LithiumError::key_import_failed("mldsa_signing_key"))?;
 
-    let sig: MlDsaSignature<MlDsa87> = sk.sign(message);
+    let sig: MlDsaSignature<MlDsa87> = sk.sign(ctx.bind_aad(message).as_slice());
     let sig_bytes = sig.to_bytes();
 
     Ok(sig_bytes.as_slice().to_vec())
@@ -58,6 +75,7 @@ pub fn verify_signature_dili(
     message: &[u8],
     signature: &[u8],
     dili_pk_bytes: &PublicBytes,
+    ctx: &Context,
 ) -> bool {
     let Ok(pk) = MlDsaVerifyingKey::<MlDsa87>::new_from_slice(dili_pk_bytes.as_slice()) else {
         return false;
@@ -67,7 +85,7 @@ pub fn verify_signature_dili(
         return false;
     };
 
-    pk.verify(message, &sig).is_ok()
+    pk.verify(ctx.bind_aad(message).as_slice(), &sig).is_ok()
 }
 
 const ED25519_SIG_LEN: usize = 64;
@@ -87,8 +105,9 @@ impl DoubleSig {
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() <= ED25519_SIG_LEN {
-            return Err(LithiumError::invalid_len(ED25519_SIG_LEN + 1, bytes.len()));
+        let expected = ED25519_SIG_LEN + MLDSA87_SIG_LEN;
+        if bytes.len() != expected {
+            return Err(LithiumError::invalid_len(expected, bytes.len()));
         }
         let mut ed = [0u8; ED25519_SIG_LEN];
         ed.copy_from_slice(&bytes[..ED25519_SIG_LEN]);
@@ -111,11 +130,12 @@ pub fn sign_double<E: AsRef<[u8]>, D: AsRef<[u8]>>(
     message: &[u8],
     ed_seed: E,
     dili_sk: D,
+    ctx: &Context,
 ) -> Result<DoubleSig> {
-    let ed: [u8; ED25519_SIG_LEN] = sign_message(message, ed_seed)?
+    let ed: [u8; ED25519_SIG_LEN] = sign_message(message, ed_seed, ctx)?
         .try_into()
         .map_err(|_| LithiumError::internal("ed25519_sig_len"))?;
-    let dili = sign_message_dili(message, dili_sk)?;
+    let dili = sign_message_dili(message, dili_sk, ctx)?;
     Ok(DoubleSig { ed, dili })
 }
 
@@ -124,8 +144,9 @@ pub fn verify_double(
     sig: &DoubleSig,
     ed_pub: &PubByte32,
     dili_pub: &PublicBytes,
+    ctx: &Context,
 ) -> bool {
-    let sig_ed = verify_signature(message, &sig.ed, ed_pub);
-    let sig_dili = verify_signature_dili(message, &sig.dili, dili_pub);
+    let sig_ed = verify_signature(message, &sig.ed, ed_pub, ctx);
+    let sig_dili = verify_signature_dili(message, &sig.dili, dili_pub, ctx);
     sig_ed && sig_dili
 }

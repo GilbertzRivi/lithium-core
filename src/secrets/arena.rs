@@ -18,8 +18,8 @@ use crate::error::{LithiumError, Result};
 const ALIGN: usize = 16;
 
 #[inline]
-fn round_up(v: usize, to: usize) -> usize {
-    v.div_ceil(to) * to
+fn round_up(v: usize, to: usize) -> Option<usize> {
+    v.div_ceil(to).checked_mul(to)
 }
 
 mod os {
@@ -160,28 +160,32 @@ struct ArenaInner {
 unsafe impl Send for ArenaInner {}
 
 impl ArenaInner {
-    fn alloc(&mut self, len: usize) -> Result<usize> {
-        let len = round_up(len.max(1), ALIGN);
+    fn alloc(&mut self, len: usize) -> Result<(usize, usize)> {
+        let len = round_up(len.max(1), ALIGN)
+            .ok_or_else(|| LithiumError::internal("arena_size_overflow"))?;
         if let Some(slots) = self.free.get_mut(&len)
             && let Some(off) = slots.pop()
         {
-            return Ok(off);
+            return Ok((off, len));
         }
-        if self.offset + len > self.size {
+        let end = self
+            .offset
+            .checked_add(len)
+            .ok_or_else(|| LithiumError::internal("arena_size_overflow"))?;
+        if end > self.size {
             return Err(LithiumError::internal("arena_exhausted"));
         }
         let off = self.offset;
-        self.offset += len;
-        Ok(off)
+        self.offset = end;
+        Ok((off, len))
     }
 
-    fn dealloc(&mut self, off: usize, len: usize) {
-        let len = round_up(len.max(1), ALIGN);
-        // SAFETY: [off, off+len) is a live, disjoint slice inside the region.
+    fn dealloc(&mut self, off: usize, aligned_len: usize) {
+        // SAFETY: [off, off+aligned_len) is a live, disjoint slice inside the region.
         unsafe {
-            ptr::write_bytes(self.base.add(off), 0, len);
+            ptr::write_bytes(self.base.add(off), 0, aligned_len);
         }
-        self.free.entry(len).or_default().push(off);
+        self.free.entry(aligned_len).or_default().push(off);
     }
 }
 
@@ -201,6 +205,7 @@ struct Region {
     ptr: *mut u8,
     off: usize,
     len: usize,
+    aligned_len: usize,
 }
 
 // SAFETY: the region is disjoint, address-stable (the mapping never moves) and
@@ -226,7 +231,7 @@ impl Region {
 impl Drop for Region {
     fn drop(&mut self) {
         let mut guard = self.arena.lock().unwrap_or_else(|e| e.into_inner());
-        guard.dealloc(self.off, self.len);
+        guard.dealloc(self.off, self.aligned_len);
     }
 }
 
@@ -240,7 +245,8 @@ impl SecretArena {
     }
 
     fn build(bytes: usize, require_lock: bool) -> Result<Self> {
-        let size = round_up(bytes.max(1), os::page_size());
+        let size = round_up(bytes.max(1), os::page_size())
+            .ok_or_else(|| LithiumError::internal("arena_size_overflow"))?;
         // SAFETY: `os::map` returns a live, page-aligned mapping of exactly `size`
         // bytes (locked, or unlocked only when `require_lock` is false), or an error.
         let (base, locked) = unsafe { os::map(size, require_lock)? };
@@ -267,13 +273,14 @@ impl SecretArena {
 
     fn claim(&self, len: usize) -> Result<Region> {
         let mut guard = self.lock()?;
-        let off = guard.alloc(len)?;
+        let (off, aligned_len) = guard.alloc(len)?;
         let ptr = unsafe { guard.base.add(off) };
         Ok(Region {
             arena: self.inner.clone(),
             ptr,
             off,
             len,
+            aligned_len,
         })
     }
 
@@ -498,6 +505,12 @@ mod tests {
             }
         }
         assert!(refused, "arena must refuse allocation past capacity");
+    }
+
+    #[test]
+    fn extreme_capacity_is_an_error_not_a_panic() {
+        assert!(SecretArena::with_capacity(usize::MAX).is_err());
+        assert!(SecretArena::with_capacity_best_effort(usize::MAX).is_err());
     }
 
     #[test]

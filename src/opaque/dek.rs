@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Lithium Project
 // SPDX-License-Identifier: AGPL-3.0-only
 
+use crate::crypto::context::Context;
 use crate::crypto::{aead, kdf, keys};
 use crate::error::{LithiumError, Result};
 use crate::public::PublicBytes;
@@ -9,10 +10,15 @@ use crate::secrets::{SecByte32, SecByte64, SecretString};
 
 const DEK_WRAP_VER: u8 = 1;
 
+fn dek_ctx() -> Result<Context<'static>> {
+    Context::base("lithium")?.add("opaque")?.add("dek-wrap")
+}
+
 fn wrap_key(export_key: &SecByte64, aad: &[u8]) -> Result<SecByte32> {
     kdf::derive32(
         &SecretBytes::from_slice(export_key.expose_as_slice()),
         None,
+        &dek_ctx()?,
         aad,
     )
 }
@@ -28,6 +34,7 @@ pub fn wrap_dek_under_export_key(
         &SecretBytes::from_slice(dek.expose_as_slice()),
         &key,
         &nonce,
+        &dek_ctx()?,
         aad,
     )?;
 
@@ -54,7 +61,7 @@ pub fn unwrap_dek_under_export_key(
 
     let key = wrap_key(export_key, aad)?;
     let wrapped = PublicBytes::from_slice(&blob.expose_as_slice()[1..]);
-    let pt = aead::decrypt(&wrapped, &key, aad)?;
+    let pt = aead::decrypt(&wrapped, &key, &dek_ctx()?, aad)?;
 
     SecByte32::from_slice(pt.expose_as_slice())
 }

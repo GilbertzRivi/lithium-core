@@ -38,7 +38,7 @@ fn main() -> lithium_core::Result<()> {
 
     println!(
         "kyberbox round-trip ok ({} sealed body bytes)",
-        wire.ciphertext.as_slice().len()
+        wire.ciphertext().as_slice().len()
     );
     Ok(())
 }

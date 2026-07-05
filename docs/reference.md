@@ -24,8 +24,9 @@ nothing about the application above it.
 #### `crypto::Context`: domain-separation labels
 
 A validated, caller-supplied domain-separation tag. It is threaded into
-`kyberbox` and `hpke`, so every derived key and AEAD label is bound to
-one usage. The library owns the version suffix; callers never write it.
+every primitive - `aead`, `kdf`, `sign`, `kyberbox`, `hpke` - so each
+derived key, signature and AEAD label is bound to one usage. The library
+owns the version suffix; callers never write it.
 
 ```
 Context::base(root: &str) -> Result<Context>            // first segment
@@ -60,24 +61,23 @@ separators. The safe path is the only path.
 AES-256-GCM-SIV with an authenticated ciphertext (AEAD).
 
 ```
-encrypt_raw(plaintext: &SecretBytes, key, nonce, aad) -> PublicBytes   // raw AES-256-GCM-SIV
-decrypt_raw(ciphertext: &PublicBytes, key, nonce, aad) -> SecretBytes
-
-encrypt(plaintext: &SecretBytes, key, nonce, aad) -> PublicBytes       // versioned blob with nonce
-decrypt(blob: &PublicBytes, key, aad) -> SecretBytes                   // parses the blob automatically
+encrypt(plaintext: &SecretBytes, key, nonce, ctx: &Context, aad) -> PublicBytes   // versioned blob with nonce
+decrypt(blob: &PublicBytes, key, ctx: &Context, aad) -> SecretBytes               // parses the blob automatically
 ```
 
 Plaintext is a `SecretBytes`; the resulting ciphertext/blob is public
 wire data, so it is returned as `PublicBytes` (and consumed as
-`&PublicBytes` on the way back in). `aad` is a plain `&[u8]`.
+`&PublicBytes` on the way back in). The effective AEAD associated data
+is `ctx` bound with the caller's `aad`, so a ciphertext only
+authenticates under the same `Context`; `aad` is a plain `&[u8]`.
 
 `encrypt` blob format:
 ```
 [version: u8 = 1][nonce: 12 bytes][ciphertext + tag: N bytes]
 ```
 
-The `aad` at `decrypt` must byte-for-byte match the one used at 
-`encrypt`; a mismatch fails authentication. An empty `aad` is 
+The `ctx` and `aad` at `decrypt` must match the ones used at
+`encrypt`; a mismatch fails authentication. An empty `aad` is
 valid, as long as both sides use the same value.
 
 #### `crypto::kdf`: key derivation
@@ -85,18 +85,17 @@ valid, as long as both sides use the same value.
 HKDF-SHA256. One call derives 32 bytes of key.
 
 ```
-derive32(input, salt, info: &[u8]) -> SecByte32              // 32 bytes
-derive_bytes(input, salt, info: &[u8], len) -> SecretBytes   // arbitrary length
-hkdf_extract(salt, ikm) -> SecByte32                         // HKDF-Extract (PRK)
-hkdf_expand(prk, info, len) -> SecretBytes                   // HKDF-Expand
+derive32(input, salt, ctx: &Context, aad: &[u8]) -> SecByte32              // 32 bytes
+derive_bytes(input, salt, ctx: &Context, aad: &[u8], len) -> SecretBytes   // arbitrary length
+hkdf_extract(salt, ikm) -> SecByte32                                       // HKDF-Extract (PRK)
+hkdf_expand(prk, info, len) -> SecretBytes                                 // HKDF-Expand
 ```
 
-`input` (IKM) and the optional `salt` are secret (`&SecretBytes`).
-`info` is a plain `&[u8]`: it is the domain-separation label, which is
-public by definition, not a secret. It is always required. `derive_bytes`
-backs `derive32` and the HPKE key schedule; `hkdf_extract` /
-`hkdf_expand` expose the two HKDF stages separately for callers that
-need them.
+`input` (IKM) and the optional `salt` are secret (`&SecretBytes`). The
+HKDF `info` is `ctx` bound with the caller's `aad`: both are the
+domain-separation label, public by definition, not a secret. `ctx` is
+always required. `hkdf_extract` / `hkdf_expand` expose the two HKDF
+stages separately for callers that need them.
 
 #### `crypto::hash`: hashing
 
@@ -114,20 +113,23 @@ post-quantum at the same time.
 
 ```
 // Hybrid: sign/verify both schemes as one unit (preferred)
-sign_double(message, ed_seed, dili_sk) -> DoubleSig
-verify_double(message, &DoubleSig, ed_pub: &PubByte32, dili_pub: &PublicBytes) -> bool
+sign_double(message, ed_seed, dili_sk, ctx: &Context) -> DoubleSig
+verify_double(message, &DoubleSig, ed_pub: &PubByte32, dili_pub: &PublicBytes, ctx: &Context) -> bool
 DoubleSig::{to_bytes, from_bytes, to_hex, from_hex}   // ed(64) || dili wire form
 
 // Single-scheme primitives
-sign_message(message, priv_ed_seed) -> Vec<u8>           // Ed25519, 64 bytes
-verify_signature(message, signature: &[u8], pub_key: &PubByte32) -> bool
-sign_message_dili(message, dili_sk_bytes) -> Vec<u8>     // ML-DSA-87 / Dilithium
-verify_signature_dili(message, signature: &[u8], dili_pk_bytes: &PublicBytes) -> bool
+sign_message(message, priv_ed_seed, ctx: &Context) -> Vec<u8>           // Ed25519, 64 bytes
+verify_signature(message, signature: &[u8], pub_key: &PubByte32, ctx: &Context) -> bool
+sign_message_dili(message, dili_sk_bytes, ctx: &Context) -> Vec<u8>     // ML-DSA-87 / Dilithium
+verify_signature_dili(message, signature: &[u8], dili_pk_bytes: &PublicBytes, ctx: &Context) -> bool
 ```
 
-A signature is a public authenticator, not a secret, so it is
-returned as a plain `Vec<u8>`; verification takes the public key as a
-public type (`PubByte32` for Ed25519, `PublicBytes` for ML-DSA-87).
+Every signature is computed over `ctx` bound with the message, so a
+signature only verifies under the same `Context`; sign and verify must
+use the same one. A signature is a public authenticator, not a secret,
+so it is returned as a plain `Vec<u8>`; verification takes the public
+key as a public type (`PubByte32` for Ed25519, `PublicBytes` for
+ML-DSA-87).
 
 `verify_double` is AND: it returns true only when both branches verify,
 so a forgery requires breaking both schemes and the result stays secure
@@ -739,10 +741,11 @@ DEK blob format (hex-encoded):
 [ver: u8 = 1][aead_blob: N bytes]
 ```
 
-The wrapping key = `HKDF(export_key, info=aad)`; `aead_blob` is the
-standard versioned `aead::encrypt` output. `aad` is supplied by the
-caller for domain separation. The `export_key` comes from the OPAQUE
-flow below.
+The wrapping key = `HKDF(export_key, info=ctx+aad)` and `aead_blob` is
+the standard versioned `aead::encrypt` output, both under a fixed
+internal `Context` (`lithium/opaque/dek-wrap`); `aad` is supplied by
+the caller for extra domain separation. The `export_key` comes from the
+OPAQUE flow below.
 
 ---
 
@@ -818,7 +821,10 @@ key for `opaque::dek` wrapping.
 #### `utils::store`: `EphemeralStoreManager`
 
 An in-memory store with TTL and zeroization on expiry. Used among 
-other things to hold temporary session tokens.
+other things to hold temporary session tokens. Values are held
+AEAD-encrypted under a per-instance key kept in the locked-memory
+arena, and the lookup keys are stored SHA-256-hashed, so a memory dump
+never exposes stored plaintext or the caller's key strings.
 
 ```rust
 store.set(key, value, ttl) -> Result<()>

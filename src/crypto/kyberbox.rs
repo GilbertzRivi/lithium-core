@@ -19,11 +19,49 @@ use crate::{
 const KYBER_BOX_VERSION: u8 = 1;
 const KYBER_KEM_ID: u8 = 1;
 
+const X25519_PUB_LEN: usize = 32;
+const KEM_CT_LEN: usize = 1568 + 2;
+
 #[derive(Clone, Debug)]
 pub struct KyberBoxSealed {
-    pub sender_x_pub: PubByte32,
-    pub kem_ct: PublicBytes,
-    pub ciphertext: PublicBytes,
+    pub(crate) sender_x_pub: PubByte32,
+    pub(crate) kem_ct: PublicBytes,
+    pub(crate) ciphertext: PublicBytes,
+}
+
+impl KyberBoxSealed {
+    pub fn sender_x_pub(&self) -> &PubByte32 {
+        &self.sender_x_pub
+    }
+
+    pub fn kem_ct(&self) -> &PublicBytes {
+        &self.kem_ct
+    }
+
+    pub fn ciphertext(&self) -> &PublicBytes {
+        &self.ciphertext
+    }
+
+    pub fn to_wire(&self) -> Vec<u8> {
+        let ct = self.ciphertext.as_slice();
+        let mut out = Vec::with_capacity(X25519_PUB_LEN + KEM_CT_LEN + ct.len());
+        out.extend_from_slice(self.sender_x_pub.as_slice());
+        out.extend_from_slice(self.kem_ct.as_slice());
+        out.extend_from_slice(ct);
+        out
+    }
+
+    pub fn from_wire(bytes: &[u8]) -> Result<Self> {
+        let prefix = X25519_PUB_LEN + KEM_CT_LEN;
+        if bytes.len() < prefix {
+            return Err(LithiumError::invalid_len(prefix, bytes.len()));
+        }
+        Ok(Self {
+            sender_x_pub: PubByte32::from_slice(&bytes[..X25519_PUB_LEN])?,
+            kem_ct: PublicBytes::from_slice(&bytes[X25519_PUB_LEN..prefix]),
+            ciphertext: PublicBytes::from_slice(&bytes[prefix..]),
+        })
+    }
 }
 
 #[inline]
@@ -39,7 +77,7 @@ fn ecdh_kdf(
         return Err(LithiumError::invalid_public_key("x25519", "low_order"));
     }
 
-    kdf::derive32(
+    kdf::derive32_raw(
         &SecretBytes::from_slice(shared.as_bytes()),
         None,
         ecdh_label.as_slice(),
@@ -66,7 +104,7 @@ fn derive_base_key(
     info.extend_from_slice(ek_t);
     info.extend_from_slice(ct_pq_hash);
 
-    kdf::derive32(&ecdh_input, Some(&ss_salt), &info)
+    kdf::derive32_raw(&ecdh_input, Some(&ss_salt), &info)
 }
 
 fn encapsulate_kem(peer_kyber_pub: &[u8]) -> Result<(SecByte32, [u8; 32], PublicBytes)> {
@@ -186,12 +224,8 @@ pub fn seal(
     let (base_key, kem_ct, sender_x_pub) =
         prep_base_key_for_encryption(ctx, priv_x, peer_pub_x, peer_k_pub)?;
     let nonce = keys::random_12()?;
-    let ciphertext = aead::encrypt(
-        data,
-        &base_key,
-        &nonce,
-        ctx.add("data")?.bind_aad(aad).as_slice(),
-    )?;
+    let data_ctx = ctx.add("data")?;
+    let ciphertext = aead::encrypt(data, &base_key, &nonce, &data_ctx, aad)?;
 
     Ok(KyberBoxSealed {
         sender_x_pub,
@@ -214,11 +248,8 @@ pub fn open(
         kyber_priv,
         &kyber_box_sealed.kem_ct,
     )?;
-    let plaintext = aead::decrypt(
-        &kyber_box_sealed.ciphertext,
-        &base_key,
-        ctx.add("data")?.bind_aad(aad).as_slice(),
-    )?;
+    let data_ctx = ctx.add("data")?;
+    let plaintext = aead::decrypt(&kyber_box_sealed.ciphertext, &base_key, &data_ctx, aad)?;
 
     Ok(plaintext)
 }

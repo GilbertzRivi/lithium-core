@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Lithium Project
 // SPDX-License-Identifier: AGPL-3.0-only
 
-use lithium_core::crypto::{keys, sign};
+use lithium_core::crypto::{Context, keys, sign};
 use lithium_core::keys::{KeyManager, PublicCachePolicy, RotationErrorPolicy};
 
 mod common;
@@ -29,16 +29,17 @@ fn arena_backed_signing_keys_sign_and_verify() {
     let dili_pub = km.public_keys().dilithium.clone();
     let msg = b"born-locked signing path";
 
+    let ctx = Context::base("test").unwrap().add("sign").unwrap();
     let (ed_sig, dili_sig) = km
-        .with_signing_keys(|ed_seed, dili_sk| {
-            let e = sign::sign_message(msg, ed_seed.expose_as_slice())?;
-            let d = sign::sign_message_dili(msg, dili_sk.expose_as_slice())?;
+        .with_signing_seeds(|ed_seed, dili_seed| {
+            let e = sign::sign_message(msg, ed_seed.expose_as_slice(), &ctx)?;
+            let d = sign::sign_message_dili(msg, dili_seed.expose_as_slice(), &ctx)?;
             Ok((e, d))
         })
         .unwrap();
 
-    assert!(sign::verify_signature(msg, &ed_sig, &ed_pub));
-    assert!(sign::verify_signature_dili(msg, &dili_sig, &dili_pub));
+    assert!(sign::verify_signature(msg, &ed_sig, &ed_pub, &ctx));
+    assert!(sign::verify_signature_dili(msg, &dili_sig, &dili_pub, &ctx));
 
     std::fs::remove_dir_all(&dir).ok();
 }

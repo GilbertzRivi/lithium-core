@@ -149,6 +149,11 @@ impl LithiumError {
     }
 
     #[inline]
+    pub fn opaque_protocol(reason: &'static str) -> Self {
+        Self::new(ErrorKind::OpaqueProtocol { reason })
+    }
+
+    #[inline]
     pub fn malformed_keyfile() -> Self {
         Self::new(ErrorKind::MalformedKeyfile)
     }
@@ -221,16 +226,23 @@ impl LithiumError {
 
     #[inline]
     pub fn is_not_found(&self) -> bool {
+        self.io_kind() == Some(std::io::ErrorKind::NotFound)
+    }
+
+    #[inline]
+    pub fn is_already_exists(&self) -> bool {
+        self.io_kind() == Some(std::io::ErrorKind::AlreadyExists)
+    }
+
+    #[inline]
+    fn io_kind(&self) -> Option<std::io::ErrorKind> {
         if self.kind != ErrorKind::Io {
-            return false;
+            return None;
         }
-        let Some(src) = self.source.as_deref() else {
-            return false;
-        };
-        if let Some(ioe) = src.downcast_ref::<std::io::Error>() {
-            return ioe.kind() == std::io::ErrorKind::NotFound;
-        }
-        false
+        self.source
+            .as_deref()?
+            .downcast_ref::<std::io::Error>()
+            .map(std::io::Error::kind)
     }
 }
 
@@ -307,6 +319,9 @@ pub enum ErrorKind {
     HttpStatus {
         code: u16,
     },
+    OpaqueProtocol {
+        reason: &'static str,
+    },
     Internal {
         reason: &'static str,
     },
@@ -358,6 +373,7 @@ impl fmt::Display for ErrorKind {
             ErrorKind::Timeout => write!(f, "timeout"),
             ErrorKind::Transport => write!(f, "transport error"),
             ErrorKind::HttpStatus { code } => write!(f, "http status {code}"),
+            ErrorKind::OpaqueProtocol { reason } => write!(f, "opaque protocol error: {reason}"),
             ErrorKind::Internal { reason } => write!(f, "internal error: {reason}"),
         }
     }

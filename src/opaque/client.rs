@@ -50,7 +50,7 @@ pub fn client_registration_finish(
             response,
             ClientRegistrationFinishParameters::new(identifiers(handler, server_id), Some(&ksf)),
         )
-        .map_err(|_| LithiumError::internal("opaque_registration_finish"))?;
+        .map_err(|_| LithiumError::opaque_protocol("opaque_registration_finish"))?;
     let export_key = SecByte64::from_slice(&res.export_key)?;
     Ok((res.message.serialize().to_vec(), export_key))
 }

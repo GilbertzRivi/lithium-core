@@ -50,7 +50,7 @@ fn login(
 ) -> lithium_core::Result<SecByte64> {
     let (req, cstate) = client::client_login_start(&ss(pwd)).unwrap();
     let (resp, sstate) =
-        server::server_login_start(setup, record, &req, cid, handler, server_id, None)?;
+        server::server_login_start(setup, Some(record), &req, cid, handler, server_id, None)?;
     let (finalization, export_key) = client::client_login_finish(
         cstate,
         &resp,
@@ -161,11 +161,36 @@ fn malformed_server_setup_is_malformed_input() {
 }
 
 #[test]
+fn login_start_without_record_succeeds_and_finish_fails_like_wrong_password() {
+    let setup = ServerSetup::generate();
+
+    let (req, cstate) = client::client_login_start(&ss(PWD)).unwrap();
+    let (resp, _sstate) =
+        server::server_login_start(&setup, None, &req, CID, HANDLER, SERVER, None).unwrap();
+
+    let err = client::client_login_finish(
+        cstate,
+        &resp,
+        &ss(PWD),
+        HANDLER,
+        SERVER,
+        None,
+        Argon2Params::default(),
+    )
+    .unwrap_err();
+    assert!(
+        is_invalid_credentials(err.kind),
+        "a missing user must fail like a wrong password, not reveal enumeration: {:?}",
+        err.kind
+    );
+}
+
+#[test]
 fn malformed_login_record_is_malformed_input_not_internal() {
     let setup = ServerSetup::generate();
     let err = server::server_login_start(
         &setup,
-        b"corrupt-record",
+        Some(b"corrupt-record"),
         b"corrupt-request",
         CID,
         HANDLER,
@@ -232,7 +257,8 @@ fn malformed_client_wire_messages_are_invalid_credentials() {
     let (record, _) = register(&setup, CID, PWD);
     let (req, _) = client::client_login_start(&ss(PWD)).unwrap();
     let (_, sstate) =
-        server::server_login_start(&setup, &record, &req, CID, HANDLER, SERVER, None).unwrap();
+        server::server_login_start(&setup, Some(&record), &req, CID, HANDLER, SERVER, None)
+            .unwrap();
     let e =
         server::server_login_finish(&sstate, b"garbage-final", HANDLER, SERVER, None).unwrap_err();
     assert!(is_invalid_credentials(e.kind), "got {:?}", e.kind);

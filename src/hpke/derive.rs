@@ -17,13 +17,13 @@ pub fn derive_keypair(ctx: &Context, ikm: &[u8]) -> Result<(HpkePrivateKey, Hpke
     let input = SecretBytes::from_slice(ikm);
     let kp = ctx.add("hpke")?.add("derive-keypair")?;
 
-    let x_priv = kdf::derive32(&input, None, kp.add("x25519-priv")?.label().as_slice())?;
+    let x_priv = kdf::derive32_raw(&input, None, kp.add("x25519-priv")?.label().as_slice())?;
 
     let x_pub = PubByte32::new(
         *XPublicKey::from(&XStaticSecret::from(*x_priv.expose_as_array())).as_bytes(),
     );
 
-    let k_seed_bytes = kdf::derive_bytes(
+    let k_seed_bytes = kdf::derive_bytes_raw(
         &input,
         None,
         kp.add("mlkem1024-seed")?.label().as_slice(),

@@ -8,6 +8,7 @@ use crate::secrets::{Nonce12, SecByte32, SecretBytes};
 const X25519_PUB_LEN: usize = 32;
 const X25519_PRIV_LEN: usize = 32;
 const MLKEM1024_PUB_LEN: usize = 1568;
+const KEM_CT_LEN: usize = 1568 + 2;
 const MLKEM1024_SEED_LEN: usize = 64;
 
 #[derive(Clone, Debug)]
@@ -25,8 +26,8 @@ pub struct HpkeContext {
 
 #[derive(Clone, Debug)]
 pub struct HpkeSealed {
-    pub enc: HpkeEnc,
-    pub ciphertext: PublicBytes,
+    pub(crate) enc: HpkeEnc,
+    pub(crate) ciphertext: PublicBytes,
 }
 
 #[derive(Clone, Debug)]
@@ -50,14 +51,49 @@ impl HpkeEnc {
     }
 
     pub fn from_wire(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() <= X25519_PUB_LEN {
-            return Err(LithiumError::invalid_len(X25519_PUB_LEN + 1, bytes.len()));
+        let expected = X25519_PUB_LEN + KEM_CT_LEN;
+        if bytes.len() != expected {
+            return Err(LithiumError::invalid_len(expected, bytes.len()));
         }
 
         let x_pub = PubByte32::from_slice(&bytes[..X25519_PUB_LEN])?;
         let kem_ct = PublicBytes::from_slice(&bytes[X25519_PUB_LEN..]);
 
         Ok(Self { x_pub, kem_ct })
+    }
+}
+
+impl HpkeSealed {
+    pub fn enc(&self) -> &HpkeEnc {
+        &self.enc
+    }
+
+    pub fn ciphertext(&self) -> &PublicBytes {
+        &self.ciphertext
+    }
+
+    pub fn to_wire(&self) -> Vec<u8> {
+        let enc = self.enc.to_wire();
+        let ct = self.ciphertext.as_slice();
+        let mut out = Vec::with_capacity(4 + enc.len() + ct.len());
+        out.extend_from_slice(&(enc.len() as u32).to_be_bytes());
+        out.extend_from_slice(&enc);
+        out.extend_from_slice(ct);
+        out
+    }
+
+    pub fn from_wire(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() < 4 {
+            return Err(LithiumError::invalid_len(4, bytes.len()));
+        }
+        let enc_len = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
+        let rest = &bytes[4..];
+        let enc_bytes = rest
+            .get(..enc_len)
+            .ok_or_else(|| LithiumError::invalid_len(enc_len, rest.len()))?;
+        let enc = HpkeEnc::from_wire(enc_bytes)?;
+        let ciphertext = PublicBytes::from_slice(&rest[enc_len..]);
+        Ok(Self { enc, ciphertext })
     }
 }
 

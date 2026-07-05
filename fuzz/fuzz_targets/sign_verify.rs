@@ -4,7 +4,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use lithium_core::crypto::sign;
+use lithium_core::crypto::{Context, sign};
 use lithium_core::public::{PubByte32, PublicBytes};
 
 fuzz_target!(|data: &[u8]| {
@@ -18,6 +18,7 @@ fuzz_target!(|data: &[u8]| {
         (&data[32..], &[][..])
     };
 
-    let _ = sign::verify_signature(msg, sig, &ed_pub);
-    let _ = sign::verify_signature_dili(msg, sig, &PublicBytes::from_slice(data));
+    let ctx = Context::base("fuzz").unwrap();
+    let _ = sign::verify_signature(msg, sig, &ed_pub, &ctx);
+    let _ = sign::verify_signature_dili(msg, sig, &PublicBytes::from_slice(data), &ctx);
 });

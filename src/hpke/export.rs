@@ -17,5 +17,5 @@ pub fn export_secret(
     let input = SecretBytes::from_slice(hpke_ctx.exporter_secret.expose_as_slice());
     let label = ctx.add("hpke")?.add("export")?.bind_aad(exporter_context);
 
-    kdf::derive_bytes(&input, None, label.as_slice(), len)
+    kdf::derive_bytes_raw(&input, None, label.as_slice(), len)
 }

@@ -14,7 +14,7 @@ use std::path::PathBuf;
 use argon2::Argon2;
 use zeroize::Zeroize;
 
-use lithium_core::crypto::{aead, keys};
+use lithium_core::crypto::{Context, aead, keys};
 use lithium_core::keys::keyfile::{read_keyfile_bytes, write_secure};
 use lithium_core::keys::{KeyManager, MkProvider, PublicCachePolicy, RotationErrorPolicy};
 use lithium_core::public::PublicBytes;
@@ -52,7 +52,10 @@ impl MkProvider for PasswordMkProvider {
         }
         let (salt, blob) = data.split_at(SALT_LEN);
         let kek = self.derive_kek(salt)?;
-        let mk = aead::decrypt(&PublicBytes::from_slice(blob), &kek, WRAP_AAD)?;
+        let ctx = Context::base("lithium")?
+            .add("example")?
+            .add("password-mk")?;
+        let mk = aead::decrypt(&PublicBytes::from_slice(blob), &kek, &ctx, WRAP_AAD)?;
         SecByte32::from_slice(mk.expose_as_slice())
     }
 
@@ -60,10 +63,14 @@ impl MkProvider for PasswordMkProvider {
         let salt = keys::random_32()?;
         let kek = self.derive_kek(salt.expose_as_slice())?;
         let nonce = keys::random_12()?;
+        let ctx = Context::base("lithium")?
+            .add("example")?
+            .add("password-mk")?;
         let blob = aead::encrypt(
             &SecretBytes::from_slice(mk.expose_as_slice()),
             &kek,
             &nonce,
+            &ctx,
             WRAP_AAD,
         )?;
         let mut out = Vec::with_capacity(SALT_LEN + blob.len());

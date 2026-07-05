@@ -3,7 +3,16 @@
 
 use lithium_core::ErrorKind;
 use lithium_core::crypto::sign::DoubleSig;
-use lithium_core::crypto::{keys, sign};
+use lithium_core::crypto::{Context, keys, sign};
+use lithium_core::public::{PubByte32, PublicBytes};
+
+fn dctx() -> Context<'static> {
+    Context::base("test").unwrap().add("double-sig").unwrap()
+}
+
+fn verify_ds(msg: &[u8], sig: &DoubleSig, ed_pub: &PubByte32, dili_pub: &PublicBytes) -> bool {
+    sign::verify_double(msg, sig, ed_pub, dili_pub, &dctx())
+}
 
 struct Keys {
     ed_seed: lithium_core::secrets::SecretFixedBytes<32>,
@@ -28,6 +37,7 @@ fn sign(k: &Keys, msg: &[u8]) -> DoubleSig {
         msg,
         k.ed_seed.expose_as_slice(),
         k.dili_sk.expose_as_slice(),
+        &dctx(),
     )
     .unwrap()
 }
@@ -37,19 +47,14 @@ fn roundtrips() {
     let k = fresh_keys();
     let msg = b"double-signed payload";
     let sig = sign(&k, msg);
-    assert!(sign::verify_double(msg, &sig, &k.ed_pub, &k.dili_pub));
+    assert!(verify_ds(msg, &sig, &k.ed_pub, &k.dili_pub));
 }
 
 #[test]
 fn wrong_message_fails() {
     let k = fresh_keys();
     let sig = sign(&k, b"original");
-    assert!(!sign::verify_double(
-        b"tampered",
-        &sig,
-        &k.ed_pub,
-        &k.dili_pub
-    ));
+    assert!(!verify_ds(b"tampered", &sig, &k.ed_pub, &k.dili_pub));
 }
 
 #[test]
@@ -65,18 +70,8 @@ fn both_branches_are_required() {
     bytes[64..].copy_from_slice(&b_bytes[64..]); // keep ed(A), swap in dili(B)
     let mixed = DoubleSig::from_bytes(&bytes).unwrap();
 
-    assert!(!sign::verify_double(
-        b"message-a",
-        &mixed,
-        &k.ed_pub,
-        &k.dili_pub
-    ));
-    assert!(!sign::verify_double(
-        b"message-b",
-        &mixed,
-        &k.ed_pub,
-        &k.dili_pub
-    ));
+    assert!(!verify_ds(b"message-a", &mixed, &k.ed_pub, &k.dili_pub));
+    assert!(!verify_ds(b"message-b", &mixed, &k.ed_pub, &k.dili_pub));
 }
 
 #[test]
@@ -87,7 +82,7 @@ fn tamper_in_either_region_fails() {
 
     let mut ed_tampered = sig.to_bytes();
     ed_tampered[0] ^= 0x01;
-    assert!(!sign::verify_double(
+    assert!(!verify_ds(
         msg,
         &DoubleSig::from_bytes(&ed_tampered).unwrap(),
         &k.ed_pub,
@@ -97,7 +92,7 @@ fn tamper_in_either_region_fails() {
     let mut dili_tampered = sig.to_bytes();
     let last = dili_tampered.len() - 1;
     dili_tampered[last] ^= 0x01;
-    assert!(!sign::verify_double(
+    assert!(!verify_ds(
         msg,
         &DoubleSig::from_bytes(&dili_tampered).unwrap(),
         &k.ed_pub,
@@ -112,8 +107,8 @@ fn wrong_public_keys_fail() {
     let msg = b"payload";
     let sig = sign(&k, msg);
 
-    assert!(!sign::verify_double(msg, &sig, &other.ed_pub, &k.dili_pub));
-    assert!(!sign::verify_double(msg, &sig, &k.ed_pub, &other.dili_pub));
+    assert!(!verify_ds(msg, &sig, &other.ed_pub, &k.dili_pub));
+    assert!(!verify_ds(msg, &sig, &k.ed_pub, &other.dili_pub));
 }
 
 #[test]
@@ -131,7 +126,7 @@ fn hex_roundtrip() {
     let sig = sign(&k, msg);
     let decoded = DoubleSig::from_hex(&sig.to_hex()).unwrap();
     assert_eq!(sig, decoded);
-    assert!(sign::verify_double(msg, &decoded, &k.ed_pub, &k.dili_pub));
+    assert!(verify_ds(msg, &decoded, &k.ed_pub, &k.dili_pub));
 }
 
 #[test]
@@ -155,24 +150,32 @@ const DILI_LEN: usize = 4627;
 
 #[test]
 fn from_bytes_length_boundaries() {
-    for short in [0usize, 1, 63, 64] {
+    for bad in [
+        0usize,
+        1,
+        63,
+        64,
+        ED_LEN + 1,
+        ED_LEN + DILI_LEN - 1,
+        ED_LEN + DILI_LEN + 1,
+    ] {
         assert!(
             matches!(
-                DoubleSig::from_bytes(&vec![0u8; short]).unwrap_err().kind,
+                DoubleSig::from_bytes(&vec![0u8; bad]).unwrap_err().kind,
                 ErrorKind::InvalidLength { .. }
             ),
-            "{short} bytes has no dilithium branch"
+            "{bad} bytes is not the exact DoubleSig length"
         );
     }
     assert!(
-        DoubleSig::from_bytes(&[0u8; ED_LEN + 1]).is_ok(),
-        "65 bytes is the minimum valid length"
+        DoubleSig::from_bytes(&vec![0u8; ED_LEN + DILI_LEN]).is_ok(),
+        "exactly ed25519 + ml-dsa-87 signature length is the only valid length"
     );
 }
 
 #[test]
-fn from_bytes_roundtrips_arbitrary_tail() {
-    let bytes: Vec<u8> = (0..ED_LEN + 1234)
+fn from_bytes_roundtrips_exact_length() {
+    let bytes: Vec<u8> = (0..ED_LEN + DILI_LEN)
         .map(|i| (i as u8).wrapping_mul(31))
         .collect();
     let sig = DoubleSig::from_bytes(&bytes).unwrap();
@@ -180,30 +183,36 @@ fn from_bytes_roundtrips_arbitrary_tail() {
 }
 
 #[test]
-fn verify_double_truncated_signature_is_false() {
+fn verify_double_truncated_signature_is_rejected() {
     let k = fresh_keys();
     let msg = b"payload";
     let full = sign(&k, msg).to_bytes();
     for cut in [1usize, 100, 2000, full.len() - (ED_LEN + 1)] {
-        let sig = DoubleSig::from_bytes(&full[..full.len() - cut]).unwrap();
         assert!(
-            !sign::verify_double(msg, &sig, &k.ed_pub, &k.dili_pub),
-            "truncated signature must not verify (cut {cut})"
+            matches!(
+                DoubleSig::from_bytes(&full[..full.len() - cut])
+                    .unwrap_err()
+                    .kind,
+                ErrorKind::InvalidLength { .. }
+            ),
+            "a truncated signature must be rejected on parse (cut {cut})"
         );
     }
 }
 
 #[test]
-fn verify_double_oversized_signature_is_false() {
+fn verify_double_oversized_signature_is_rejected() {
     let k = fresh_keys();
     let msg = b"payload";
     for extra in [1usize, 100, DILI_LEN] {
         let mut bytes = sign(&k, msg).to_bytes();
         bytes.resize(bytes.len() + extra, 0xAB);
-        let sig = DoubleSig::from_bytes(&bytes).unwrap();
         assert!(
-            !sign::verify_double(msg, &sig, &k.ed_pub, &k.dili_pub),
-            "oversized signature must not verify (extra {extra})"
+            matches!(
+                DoubleSig::from_bytes(&bytes).unwrap_err().kind,
+                ErrorKind::InvalidLength { .. }
+            ),
+            "an oversized signature must be rejected on parse (extra {extra})"
         );
     }
 }
@@ -215,12 +224,7 @@ fn verify_double_random_full_length_is_false() {
         .map(|i| (i as u8).wrapping_mul(37).wrapping_add(11))
         .collect();
     let sig = DoubleSig::from_bytes(&bytes).unwrap();
-    assert!(!sign::verify_double(
-        b"payload",
-        &sig,
-        &k.ed_pub,
-        &k.dili_pub
-    ));
+    assert!(!verify_ds(b"payload", &sig, &k.ed_pub, &k.dili_pub));
 }
 
 #[test]
@@ -233,7 +237,7 @@ fn verify_double_valid_ed_garbage_dili_is_false() {
     }
     let sig = DoubleSig::from_bytes(&bytes).unwrap();
     assert!(
-        !sign::verify_double(msg, &sig, &k.ed_pub, &k.dili_pub),
+        !verify_ds(msg, &sig, &k.ed_pub, &k.dili_pub),
         "a valid ed branch must not rescue a broken dili branch"
     );
 }
@@ -246,7 +250,12 @@ fn verify_double_off_by_one_dili_length_no_panic() {
     for len in [ED_LEN + DILI_LEN - 1, ED_LEN + DILI_LEN + 1] {
         let mut bytes = valid.clone();
         bytes.resize(len, 0x00);
-        let sig = DoubleSig::from_bytes(&bytes).unwrap();
-        assert!(!sign::verify_double(msg, &sig, &k.ed_pub, &k.dili_pub));
+        assert!(
+            matches!(
+                DoubleSig::from_bytes(&bytes).unwrap_err().kind,
+                ErrorKind::InvalidLength { .. }
+            ),
+            "an off-by-one length must be rejected on parse (len {len})"
+        );
     }
 }

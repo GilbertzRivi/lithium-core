@@ -7,8 +7,7 @@ use std::sync::OnceLock;
 
 use libfuzzer_sys::fuzz_target;
 use lithium_core::crypto::context::Context;
-use lithium_core::hpke::{self, HpkeEnc, HpkeSealed};
-use lithium_core::public::PublicBytes;
+use lithium_core::hpke::{self, HpkeSealed};
 use lithium_core::secrets::{SecByte32, SecretBytes};
 
 static SK: OnceLock<(SecByte32, SecretBytes)> = OnceLock::new();
@@ -36,12 +35,15 @@ fuzz_target!(|data: &[u8]| {
     }
     let (x_priv, k_priv) = sk();
     let mid = 33 + (data[0] as usize % (data.len() - 33));
-    let Ok(enc) = HpkeEnc::from_wire(&data[1..mid]) else {
-        return;
-    };
-    let sealed = HpkeSealed {
-        enc,
-        ciphertext: PublicBytes::from_slice(&data[mid..]),
-    };
-    let _ = hpke::open_base(ctx(), x_priv, k_priv, b"info", b"aad", &sealed);
+    let enc_wire = &data[1..mid];
+    let ct = &data[mid..];
+
+    let mut wire = Vec::with_capacity(4 + enc_wire.len() + ct.len());
+    wire.extend_from_slice(&(enc_wire.len() as u32).to_be_bytes());
+    wire.extend_from_slice(enc_wire);
+    wire.extend_from_slice(ct);
+
+    if let Ok(sealed) = HpkeSealed::from_wire(&wire) {
+        let _ = hpke::open_base(ctx(), x_priv, k_priv, b"info", b"aad", &sealed);
+    }
 });

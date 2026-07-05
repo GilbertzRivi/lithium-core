@@ -10,7 +10,7 @@ use hkdf::Hkdf;
 use sha2::Sha256;
 
 use crate::crypto::{aead, keys};
-use crate::error::{ErrorKind, LithiumError, Result};
+use crate::error::{LithiumError, Result};
 use crate::public::PublicBytes;
 use crate::secrets::{MasterKey32, SecByte12, SecByte32, SecretBytes, SecretFixedBytes};
 
@@ -97,6 +97,36 @@ pub fn write_secure(path: &Path, data: &[u8]) -> Result<()> {
     Ok(())
 }
 
+pub fn write_secure_new(path: &Path, data: &[u8]) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(LithiumError::io)?;
+    }
+
+    let (mut f, tmp) = create_private_tmp(path)?;
+
+    let write_res = (|| -> Result<()> {
+        f.write_all(data).map_err(LithiumError::io)?;
+        f.sync_all().map_err(LithiumError::io)?;
+        Ok(())
+    })();
+
+    if let Err(e) = write_res {
+        let _ = fs::remove_file(&tmp);
+        return Err(e);
+    }
+
+    let link_res = fs::hard_link(&tmp, path);
+    let _ = fs::remove_file(&tmp);
+    link_res.map_err(LithiumError::io)?;
+
+    #[cfg(unix)]
+    if let Some(parent) = path.parent() {
+        let _ = fs::File::open(parent).and_then(|dir| dir.sync_all());
+    }
+
+    Ok(())
+}
+
 #[inline]
 fn aad_for(version: u8, key_type: &str) -> Vec<u8> {
     format!("keyfile:v{}|{}", version, key_type).into_bytes()
@@ -166,28 +196,25 @@ fn build_record(
     out
 }
 
+fn take<'a>(buf: &'a [u8], idx: &mut usize, len: usize) -> Result<&'a [u8]> {
+    let end = idx
+        .checked_add(len)
+        .ok_or_else(LithiumError::malformed_keyfile)?;
+    let slice = buf
+        .get(*idx..end)
+        .ok_or_else(LithiumError::malformed_keyfile)?;
+    *idx = end;
+    Ok(slice)
+}
+
 fn read_u16(buf: &[u8], idx: &mut usize) -> Result<u16> {
-    if *idx + 2 > buf.len() {
-        return Err(LithiumError::new(ErrorKind::InvalidLength {
-            expected: *idx + 2,
-            got: buf.len(),
-        }));
-    }
-    let v = u16::from_be_bytes([buf[*idx], buf[*idx + 1]]);
-    *idx += 2;
-    Ok(v)
+    let b = take(buf, idx, 2)?;
+    Ok(u16::from_be_bytes([b[0], b[1]]))
 }
 
 fn read_u32(buf: &[u8], idx: &mut usize) -> Result<u32> {
-    if *idx + 4 > buf.len() {
-        return Err(LithiumError::new(ErrorKind::InvalidLength {
-            expected: *idx + 4,
-            got: buf.len(),
-        }));
-    }
-    let v = u32::from_be_bytes([buf[*idx], buf[*idx + 1], buf[*idx + 2], buf[*idx + 3]]);
-    *idx += 4;
-    Ok(v)
+    let b = take(buf, idx, 4)?;
+    Ok(u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
 }
 
 #[allow(clippy::type_complexity)]
@@ -209,45 +236,37 @@ fn parse_keyfile(
     idx += 1;
     let alg_id = buf[idx];
     idx += 1;
-    let dek_len = u16::from_be_bytes([buf[idx], buf[idx + 1]]);
-    idx += 2;
+    let dek_len = read_u16(buf, &mut idx)?;
 
     let len_salt = read_u16(buf, &mut idx)? as usize;
-    if len_salt != 32 || idx + 32 > buf.len() {
+    if len_salt != 32 {
         return Err(LithiumError::malformed_keyfile());
     }
     let mut salt = [0u8; 32];
-    salt.copy_from_slice(&buf[idx..idx + 32]);
-    idx += 32;
+    salt.copy_from_slice(take(buf, &mut idx, 32)?);
 
     let len_nonce_wrap = read_u16(buf, &mut idx)? as usize;
-    if len_nonce_wrap != 12 || idx + 12 > buf.len() {
+    if len_nonce_wrap != 12 {
         return Err(LithiumError::malformed_keyfile());
     }
     let mut nonce_wrap = [0u8; 12];
-    nonce_wrap.copy_from_slice(&buf[idx..idx + 12]);
-    idx += 12;
+    nonce_wrap.copy_from_slice(take(buf, &mut idx, 12)?);
 
     let len_ct_wrap = read_u16(buf, &mut idx)? as usize;
-    if idx + len_ct_wrap > buf.len() {
-        return Err(LithiumError::malformed_keyfile());
-    }
-    let ct_wrap = buf[idx..idx + len_ct_wrap].to_vec();
-    idx += len_ct_wrap;
+    let ct_wrap = take(buf, &mut idx, len_ct_wrap)?.to_vec();
 
     let len_nonce_payload = read_u16(buf, &mut idx)? as usize;
-    if len_nonce_payload != 12 || idx + 12 > buf.len() {
+    if len_nonce_payload != 12 {
         return Err(LithiumError::malformed_keyfile());
     }
     let mut nonce_payload = [0u8; 12];
-    nonce_payload.copy_from_slice(&buf[idx..idx + 12]);
-    idx += 12;
+    nonce_payload.copy_from_slice(take(buf, &mut idx, 12)?);
 
     let len_ct_payload = read_u32(buf, &mut idx)? as usize;
-    if idx + len_ct_payload != buf.len() {
+    let ct_payload = take(buf, &mut idx, len_ct_payload)?.to_vec();
+    if idx != buf.len() {
         return Err(LithiumError::malformed_keyfile());
     }
-    let ct_payload = buf[idx..idx + len_ct_payload].to_vec();
 
     Ok((
         version,
@@ -302,41 +321,7 @@ fn decrypt_payload_32(
     SecretFixedBytes::<32>::from_slice(pt.expose_as_slice())
 }
 
-pub fn save_secret32_encrypted(
-    path: &Path,
-    mk: &MasterKey32,
-    payload: &SecretFixedBytes<32>,
-    key_type: &str,
-) -> Result<()> {
-    let dek = keys::random_fixed::<32>()?;
-    let salt = keys::random_fixed::<32>()?;
-    let kek = derive_kek(mk, salt.expose_as_array())?;
-    let aad = aad_for(KEYFILE_VERSION, key_type);
-
-    let (ct_wrap, nonce_wrap) = wrap_dek(&kek, &dek, &aad)?;
-    let (ct_payload, nonce_payload) = encrypt_payload(&dek, payload.expose_as_slice(), &aad)?;
-
-    let out = build_record(
-        KEYFILE_VERSION,
-        ALG_ID_AES256_GCM_SIV,
-        DEK_LEN,
-        salt.expose_as_array(),
-        &nonce_wrap,
-        &ct_wrap,
-        &nonce_payload,
-        &ct_payload,
-    );
-
-    write_secure(path, &out)?;
-    Ok(())
-}
-
-pub fn save_bytes_encrypted(
-    path: &Path,
-    mk: &MasterKey32,
-    payload: &[u8],
-    key_type: &str,
-) -> Result<()> {
+fn encode_encrypted(mk: &MasterKey32, payload: &[u8], key_type: &str) -> Result<Vec<u8>> {
     let dek = keys::random_fixed::<32>()?;
     let salt = keys::random_fixed::<32>()?;
     let kek = derive_kek(mk, salt.expose_as_array())?;
@@ -345,7 +330,7 @@ pub fn save_bytes_encrypted(
     let (ct_wrap, nonce_wrap) = wrap_dek(&kek, &dek, &aad)?;
     let (ct_payload, nonce_payload) = encrypt_payload(&dek, payload, &aad)?;
 
-    let out = build_record(
+    Ok(build_record(
         KEYFILE_VERSION,
         ALG_ID_AES256_GCM_SIV,
         DEK_LEN,
@@ -354,10 +339,49 @@ pub fn save_bytes_encrypted(
         &ct_wrap,
         &nonce_payload,
         &ct_payload,
-    );
+    ))
+}
 
-    write_secure(path, &out)?;
-    Ok(())
+pub fn save_secret32_encrypted(
+    path: &Path,
+    mk: &MasterKey32,
+    payload: &SecretFixedBytes<32>,
+    key_type: &str,
+) -> Result<()> {
+    write_secure(
+        path,
+        &encode_encrypted(mk, payload.expose_as_slice(), key_type)?,
+    )
+}
+
+pub fn save_secret32_encrypted_new(
+    path: &Path,
+    mk: &MasterKey32,
+    payload: &SecretFixedBytes<32>,
+    key_type: &str,
+) -> Result<()> {
+    write_secure_new(
+        path,
+        &encode_encrypted(mk, payload.expose_as_slice(), key_type)?,
+    )
+}
+
+pub fn save_bytes_encrypted(
+    path: &Path,
+    mk: &MasterKey32,
+    payload: &[u8],
+    key_type: &str,
+) -> Result<()> {
+    write_secure(path, &encode_encrypted(mk, payload, key_type)?)
+}
+
+pub fn save_bytes_encrypted_new(
+    path: &Path,
+    mk: &MasterKey32,
+    payload: &[u8],
+    key_type: &str,
+) -> Result<()> {
+    write_secure_new(path, &encode_encrypted(mk, payload, key_type)?)
 }
 
 pub fn load_secret32_decrypted(

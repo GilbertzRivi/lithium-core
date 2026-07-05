@@ -8,6 +8,7 @@ use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use crate::crypto::context::Context;
 use crate::crypto::{aead, keys};
 use crate::error::{LithiumError, Result};
 use crate::public::{PubByte32, PublicBytes};
@@ -40,7 +41,7 @@ const DILI_PRIV: &str = "dilithium-mldsa87.keyf";
 const KT_ED_SEED: &str = "ed25519-seed-v1";
 const KT_X_SEED: &str = "x25519-seed-v1";
 const KT_KYBER_SK: &str = "kyber-mlkem1024-sk-v1";
-const KT_DILI_SK: &str = "dilithium-mldsa87-sk-v1";
+const KT_DILI_SEED: &str = "dilithium-mldsa87-seed-v1";
 const KT_ROTATE_NEXT_OLD: &str = "rotate-next-mk-old-v1";
 const KT_ROTATE_NEXT_NEW: &str = "rotate-next-mk-new-v1";
 
@@ -119,6 +120,7 @@ pub struct KeyManagerConfig {
 
 impl KeyManagerConfig {
     pub const DEFAULT_ROTATE_EVERY: Duration = Duration::from_secs(3600);
+    pub const MIN_ROTATE_EVERY: Duration = Duration::from_millis(1);
     pub const DEFAULT_ARENA_CAPACITY: usize = 8 * 1024;
 
     pub fn new(locking: MemoryLocking, public_cache_policy: PublicCachePolicy) -> Self {
@@ -171,9 +173,11 @@ struct RotationGuard<P: MkProvider> {
 
 impl<P: MkProvider> Drop for RotationGuard<P> {
     fn drop(&mut self) {
-        if let Ok(mut ctl) = self.shared.ctl.lock() {
-            ctl.stop = true;
-        }
+        self.shared
+            .ctl
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .stop = true;
         self.shared.signal.notify_all();
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
@@ -353,8 +357,11 @@ fn load_or_create_label_secret32(
     }
 
     let v = keys::random_32()?;
-    keyfile::save_secret32_encrypted(&path, mk, &v, &key_type)?;
-    Ok(v)
+    match keyfile::save_secret32_encrypted_new(&path, mk, &v, &key_type) {
+        Ok(()) => Ok(v),
+        Err(e) if e.is_already_exists() => keyfile::load_secret32_decrypted(&path, mk, &key_type),
+        Err(e) => Err(e),
+    }
 }
 
 fn load_or_create_label_bytes(
@@ -372,8 +379,11 @@ fn load_or_create_label_bytes(
     }
 
     let v = generate()?;
-    keyfile::save_bytes_encrypted(&path, mk, v.expose_as_slice(), &key_type)?;
-    Ok(v)
+    match keyfile::save_bytes_encrypted_new(&path, mk, v.expose_as_slice(), &key_type) {
+        Ok(()) => Ok(v),
+        Err(e) if e.is_already_exists() => keyfile::load_bytes_decrypted(&path, mk, &key_type),
+        Err(e) => Err(e),
+    }
 }
 
 fn ensure_asymmetric_material(
@@ -421,7 +431,7 @@ fn ensure_asymmetric_material(
         &priv_dir.join(DILI_PRIV),
         &pub_dir.join(DILI_PUB),
         mk,
-        KT_DILI_SK,
+        KT_DILI_SEED,
         public_cache_policy,
         keys::mldsa87_pub_from_seed,
     )?;
@@ -462,7 +472,7 @@ fn collect_rewrap_targets(
         (priv_dir.join(ED_PRIV), KT_ED_SEED.to_owned()),
         (priv_dir.join(X_PRIV), KT_X_SEED.to_owned()),
         (priv_dir.join(KYBER_PRIV), KT_KYBER_SK.to_owned()),
-        (priv_dir.join(DILI_PRIV), KT_DILI_SK.to_owned()),
+        (priv_dir.join(DILI_PRIV), KT_DILI_SEED.to_owned()),
     ];
 
     for (path, key_type) in fixed {
@@ -654,10 +664,35 @@ impl<P: MkProvider> Shared<P> {
         prepare_staged_files(&self.rotate_dir, &old_mk, &new_mk, &targets)?;
         write_marker(&self.rotate_dir.join(ROTATE_READY_FILE), b"ready")?;
 
-        apply_staged_files(&self.rotate_dir, &targets)?;
-        self.mk_provider.store_mk(&new_mk)?;
-        cleanup_rotation_dir(&self.rotate_dir)?;
-        Ok(())
+        self.commit_rotation(&targets, &new_mk)
+    }
+
+    fn commit_rotation(&self, targets: &[RewrapTarget], new_mk: &MasterKey32) -> Result<()> {
+        let attempt = (|| -> Result<()> {
+            apply_staged_files(&self.rotate_dir, targets)?;
+            self.mk_provider.store_mk(new_mk)?;
+            cleanup_rotation_dir(&self.rotate_dir)?;
+            Ok(())
+        })();
+
+        let Err(e) = attempt else {
+            return Ok(());
+        };
+
+        // Past the ready marker a failed commit leaves a mixed store: finish it or fail closed.
+        match recover_pending_rotation_if_any(
+            &self.root_dir,
+            &self.priv_dir,
+            &self.secrets_dir,
+            &self.rotate_dir,
+            &self.mk_provider,
+        ) {
+            Ok(()) => Ok(()),
+            Err(_) => {
+                self.poisoned.store(true, Ordering::Release);
+                Err(e)
+            }
+        }
     }
 
     fn handle_rotation_error(&self, e: &LithiumError) -> bool {
@@ -749,6 +784,9 @@ impl<P: MkProvider + Send + Sync + 'static> KeyManager<P> {
             rotate_every,
             arena_capacity,
         } = config;
+        if rotate_every < KeyManagerConfig::MIN_ROTATE_EVERY {
+            return Err(LithiumError::malformed_input("rotate_every_too_small"));
+        }
         let root_dir = base_dir.join("KeyManager");
         let pub_dir = root_dir.join(PUB_DIR);
         let priv_dir = root_dir.join(PRIV_DIR);
@@ -851,13 +889,17 @@ impl<P: MkProvider + Send + Sync + 'static> KeyManager<P> {
         self.shared.arena.is_locked()
     }
 
-    pub fn set_rotate_interval(&self, interval: Duration) {
+    pub fn set_rotate_interval(&self, interval: Duration) -> Result<()> {
+        if interval < KeyManagerConfig::MIN_ROTATE_EVERY {
+            return Err(LithiumError::malformed_input("rotate_every_too_small"));
+        }
         {
             let mut ctl = self.shared.ctl.lock().unwrap_or_else(|e| e.into_inner());
             ctl.rotate_every = interval;
             ctl.next_rotation_at = Instant::now() + interval;
         }
         self.shared.signal.notify_all();
+        Ok(())
     }
 
     pub fn reload_public_keys(&self) -> Result<()> {
@@ -894,7 +936,10 @@ impl<P: MkProvider + Send + Sync + 'static> KeyManager<P> {
     ) -> Result<PublicBytes> {
         let dek = self.get_or_create_secret32(label)?;
         let nonce = keys::random_12()?;
-        aead::encrypt(plaintext, &dek, &nonce, aad)
+        let ctx = Context::base("lithium")?
+            .add("keymanager")?
+            .add("label-aead")?;
+        aead::encrypt(plaintext, &dek, &nonce, &ctx, aad)
     }
 
     pub fn decrypt_with_label(
@@ -904,7 +949,10 @@ impl<P: MkProvider + Send + Sync + 'static> KeyManager<P> {
         aad: &[u8],
     ) -> Result<SecretBytes> {
         let dek = self.get_or_create_secret32(label)?;
-        aead::decrypt(blob, &dek, aad)
+        let ctx = Context::base("lithium")?
+            .add("keymanager")?
+            .add("label-aead")?;
+        aead::decrypt(blob, &dek, &ctx, aad)
     }
 
     pub fn load_or_create_sealed_blob(
@@ -917,7 +965,7 @@ impl<P: MkProvider + Send + Sync + 'static> KeyManager<P> {
         load_or_create_label_bytes(&self.shared.secrets_dir, &root_mk, label, generate)
     }
 
-    pub fn with_signing_keys<R>(
+    pub fn with_signing_seeds<R>(
         &self,
         f: impl FnOnce(ArenaByte32, ArenaByte32) -> Result<R>,
     ) -> Result<R> {
@@ -929,10 +977,10 @@ impl<P: MkProvider + Send + Sync + 'static> KeyManager<P> {
                 &mk,
                 KT_ED_SEED,
             )?;
-            let dili_sk = keyfile::load_bytes_decrypted(
+            let dili_seed = keyfile::load_bytes_decrypted(
                 &self.shared.priv_dir.join(DILI_PRIV),
                 &mk,
-                KT_DILI_SK,
+                KT_DILI_SEED,
             )?;
             let ed_locked = self
                 .shared
@@ -941,7 +989,7 @@ impl<P: MkProvider + Send + Sync + 'static> KeyManager<P> {
             let dili_locked = self
                 .shared
                 .arena
-                .store_slice_fixed::<32>(dili_sk.expose_as_slice())?;
+                .store_slice_fixed::<32>(dili_seed.expose_as_slice())?;
             (ed_locked, dili_locked)
         };
         f(ed_locked, dili_locked)
@@ -987,7 +1035,7 @@ mod tests {
         assert_eq!(KT_ED_SEED, "ed25519-seed-v1");
         assert_eq!(KT_X_SEED, "x25519-seed-v1");
         assert_eq!(KT_KYBER_SK, "kyber-mlkem1024-sk-v1");
-        assert_eq!(KT_DILI_SK, "dilithium-mldsa87-sk-v1");
+        assert_eq!(KT_DILI_SEED, "dilithium-mldsa87-seed-v1");
         assert_eq!(KT_ROTATE_NEXT_OLD, "rotate-next-mk-old-v1");
         assert_eq!(KT_ROTATE_NEXT_NEW, "rotate-next-mk-new-v1");
         assert_eq!(label_key_type(b"ab"), "secret32:6162");

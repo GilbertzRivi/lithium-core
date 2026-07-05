@@ -51,7 +51,7 @@ pub fn server_registration_start(
     let request = RegistrationRequest::<LithiumCipherSuite>::deserialize(request_bytes)
         .map_err(|_| bad_message())?;
     let res = ServerRegistration::start(&setup.0, request, credential_identifier)
-        .map_err(|_| LithiumError::internal("opaque_registration_start"))?;
+        .map_err(|_| LithiumError::opaque_protocol("opaque_registration_start"))?;
     Ok(res.message.serialize().to_vec())
 }
 
@@ -63,15 +63,21 @@ pub fn server_registration_finish(upload_bytes: &[u8]) -> Result<Vec<u8>> {
 
 pub fn server_login_start(
     setup: &ServerSetup,
-    record_bytes: &[u8],
+    record_bytes: Option<&[u8]>,
     request_bytes: &[u8],
     credential_identifier: &[u8],
     handler: &[u8],
     server_id: &[u8],
     context: Option<&[u8]>,
 ) -> Result<(Vec<u8>, SecretBytes)> {
-    let record = ServerRegistration::<LithiumCipherSuite>::deserialize(record_bytes)
-        .map_err(|_| LithiumError::malformed_input("opaque_record"))?;
+    // None means "no such user"; opaque_ke fakes a response so it is indistinguishable from a wrong password.
+    let record = match record_bytes {
+        Some(bytes) => Some(
+            ServerRegistration::<LithiumCipherSuite>::deserialize(bytes)
+                .map_err(|_| LithiumError::malformed_input("opaque_record"))?,
+        ),
+        None => None,
+    };
     let request = CredentialRequest::<LithiumCipherSuite>::deserialize(request_bytes)
         .map_err(|_| bad_message())?;
 
@@ -84,12 +90,12 @@ pub fn server_login_start(
     let res = ServerLogin::start(
         &mut rng,
         &setup.0,
-        Some(record),
+        record,
         request,
         credential_identifier,
         params,
     )
-    .map_err(|_| LithiumError::internal("opaque_login_start"))?;
+    .map_err(|_| LithiumError::opaque_protocol("opaque_login_start"))?;
 
     Ok((
         res.message.serialize().to_vec(),

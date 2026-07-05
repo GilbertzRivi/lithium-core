@@ -29,6 +29,25 @@ impl MkProvider for FlakyMk {
     }
 }
 
+struct CommitFailMk {
+    path: PathBuf,
+    fail_store: Arc<AtomicBool>,
+}
+
+impl MkProvider for CommitFailMk {
+    fn load_mk(&self) -> Result<SecByte32> {
+        let bytes = std::fs::read(&self.path).map_err(LithiumError::io)?;
+        SecByte32::from_slice(&bytes)
+    }
+
+    fn store_mk(&self, mk: &SecByte32) -> Result<()> {
+        if self.fail_store.load(Ordering::Acquire) {
+            return Err(LithiumError::internal("injected_store_failure"));
+        }
+        std::fs::write(&self.path, mk.expose_as_slice()).map_err(LithiumError::io)
+    }
+}
+
 fn tmp_dir(tag: &str) -> PathBuf {
     std::env::temp_dir().join(format!("lithium-km-rotation-{tag}-{}", std::process::id()))
 }
@@ -65,7 +84,7 @@ fn auto_rotation_rewraps_and_preserves_secrets() {
     let secret_before = km.get_or_create_secret32(b"label").unwrap();
     let mk_before = std::fs::read(&mk_path).unwrap();
 
-    km.set_rotate_interval(Duration::from_millis(40));
+    km.set_rotate_interval(Duration::from_millis(40)).unwrap();
     assert!(
         wait_until(|| std::fs::read(&mk_path)
             .map(|b| b != mk_before)
@@ -111,7 +130,7 @@ fn callback_policy_reports_error_and_keeps_running() {
     .unwrap();
 
     fail.store(true, Ordering::Release);
-    km.set_rotate_interval(Duration::from_millis(40));
+    km.set_rotate_interval(Duration::from_millis(40)).unwrap();
 
     assert!(
         wait_until(|| hits.load(Ordering::Acquire) > 0),
@@ -151,7 +170,7 @@ fn strict_policy_disables_manager_after_failure() {
     .unwrap();
 
     fail.store(true, Ordering::Release);
-    km.set_rotate_interval(Duration::from_millis(40));
+    km.set_rotate_interval(Duration::from_millis(40)).unwrap();
 
     assert!(
         wait_until(|| hits.load(Ordering::Acquire) > 0),
@@ -162,6 +181,119 @@ fn strict_policy_disables_manager_after_failure() {
     assert!(
         km.get_or_create_secret32(b"should-fail").is_err(),
         "Strict must fail-close: every op errors after a rotation failure, even once the fault clears"
+    );
+
+    drop(km);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn commit_phase_failure_fails_closed_even_under_callback() {
+    let dir = tmp_dir("commit-fail");
+    std::fs::remove_dir_all(&dir).ok();
+
+    let fail_store = Arc::new(AtomicBool::new(false));
+    let hits = Arc::new(AtomicUsize::new(0));
+    let cb_hits = hits.clone();
+
+    let km = KeyManager::start(
+        &dir,
+        CommitFailMk {
+            path: dir.join("mk"),
+            fail_store: fail_store.clone(),
+        },
+        PublicCachePolicy::RepairMissingOnly,
+        RotationErrorPolicy::Callback(Box::new(move |_| {
+            cb_hits.fetch_add(1, Ordering::Release);
+        })),
+    )
+    .unwrap();
+
+    km.get_or_create_secret32(b"before").unwrap();
+
+    fail_store.store(true, Ordering::Release);
+    km.set_rotate_interval(Duration::from_millis(40)).unwrap();
+
+    assert!(
+        wait_until(|| hits.load(Ordering::Acquire) > 0),
+        "the callback must fire when the commit phase fails"
+    );
+
+    assert!(
+        km.get_or_create_secret32(b"after").is_err(),
+        "a commit-phase failure must fail closed even under Callback policy"
+    );
+
+    drop(km);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn concurrent_get_or_create_agrees_on_one_secret() {
+    let dir = tmp_dir("race");
+    std::fs::remove_dir_all(&dir).ok();
+
+    let km = KeyManager::start(
+        &dir,
+        FlakyMk {
+            path: dir.join("mk"),
+            fail: Arc::new(AtomicBool::new(false)),
+        },
+        PublicCachePolicy::RepairMissingOnly,
+        RotationErrorPolicy::Callback(Box::new(|_| {})),
+    )
+    .unwrap();
+
+    let mut workers = Vec::new();
+    for _ in 0..16 {
+        let km = km.clone();
+        workers.push(std::thread::spawn(move || {
+            km.get_or_create_secret32(b"contended")
+                .unwrap()
+                .expose_as_slice()
+                .to_vec()
+        }));
+    }
+    let results: Vec<Vec<u8>> = workers.into_iter().map(|w| w.join().unwrap()).collect();
+
+    let first = &results[0];
+    assert!(
+        results.iter().all(|r| r == first),
+        "every racing caller must observe the same persisted secret"
+    );
+    let persisted = km
+        .get_or_create_secret32(b"contended")
+        .unwrap()
+        .expose_as_slice()
+        .to_vec();
+    assert_eq!(
+        &persisted, first,
+        "the observed secret must be the one on disk"
+    );
+
+    drop(km);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn zero_rotate_interval_is_rejected() {
+    let dir = tmp_dir("zero-interval");
+    std::fs::remove_dir_all(&dir).ok();
+
+    let km = KeyManager::start(
+        &dir,
+        FlakyMk {
+            path: dir.join("mk"),
+            fail: Arc::new(AtomicBool::new(false)),
+        },
+        PublicCachePolicy::RepairMissingOnly,
+        RotationErrorPolicy::Callback(Box::new(|_| {})),
+    )
+    .unwrap();
+
+    assert!(
+        km.set_rotate_interval(Duration::ZERO).is_err(),
+        "a zero rotation interval must be rejected to avoid a busy rotation loop"
     );
 
     drop(km);

@@ -9,7 +9,7 @@ use libfuzzer_sys::fuzz_target;
 use lithium_core::crypto::context::Context;
 use lithium_core::crypto::keys;
 use lithium_core::crypto::kyberbox::{self, KyberBoxSealed};
-use lithium_core::public::{PubByte32, PublicBytes};
+use lithium_core::public::PubByte32;
 use lithium_core::secrets::{SecByte32, SecByte64};
 
 static KP: OnceLock<(SecByte32, PubByte32, SecByte64)> = OnceLock::new();
@@ -30,16 +30,11 @@ fn ctx() -> &'static Context<'static> {
 fuzz_target!(|data: &[u8]| {
     let (x_priv, sender_x_pub, k_priv) = kp();
 
-    let n = data.len();
-    let kem_end = n / 3;
-    let ct_end = 2 * n / 3;
+    let mut wire_bytes = Vec::with_capacity(32 + data.len());
+    wire_bytes.extend_from_slice(sender_x_pub.as_slice());
+    wire_bytes.extend_from_slice(data);
 
-    let wire = KyberBoxSealed {
-        sender_x_pub: *sender_x_pub,
-        kem_ct: PublicBytes::from_slice(&data[..kem_end]),
-        ciphertext: PublicBytes::from_slice(&data[kem_end..ct_end]),
-    };
-    let aad = &data[ct_end..];
-
-    let _ = kyberbox::open(ctx(), x_priv, k_priv, aad, &wire);
+    if let Ok(wire) = KyberBoxSealed::from_wire(&wire_bytes) {
+        let _ = kyberbox::open(ctx(), x_priv, k_priv, b"fuzz-aad", &wire);
+    }
 });
