@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 use lithium_core::crypto::Context;
-use lithium_core::hpke::{derive_keypair, setup_receiver, setup_sender};
+use lithium_core::hpke::{derive_keypair_from_high_entropy_ikm, setup_receiver, setup_sender};
 use lithium_core::public::PublicBytes;
 use lithium_core::secrets::SecretBytes;
 
@@ -23,7 +23,11 @@ fn ctx_of(s: &str) -> Context<'_> {
 
 #[test]
 fn multi_message_roundtrips_in_order() {
-    let (sk, pk) = derive_keypair(&ctx_of(CTX), b"stream-ikm-in-order").unwrap();
+    let (sk, pk) = derive_keypair_from_high_entropy_ikm(
+        &ctx_of(CTX),
+        &SecretBytes::from_slice(b"stream-ikm-in-order"),
+    )
+    .unwrap();
     let (enc, mut sender) = setup_sender(&ctx_of(CTX), &pk, b"info").unwrap();
 
     let c0 = sender.seal(b"aad-0", &msg(b"chunk zero")).unwrap();
@@ -47,7 +51,11 @@ fn multi_message_roundtrips_in_order() {
 
 #[test]
 fn same_plaintext_gives_distinct_ciphertexts_per_sequence() {
-    let (_, pk) = derive_keypair(&ctx_of(CTX), b"stream-ikm-distinct").unwrap();
+    let (_, pk) = derive_keypair_from_high_entropy_ikm(
+        &ctx_of(CTX),
+        &SecretBytes::from_slice(b"stream-ikm-distinct"),
+    )
+    .unwrap();
     let (_enc, mut sender) = setup_sender(&ctx_of(CTX), &pk, b"info").unwrap();
 
     let a = sender.seal(b"", &msg(b"same")).unwrap();
@@ -57,7 +65,11 @@ fn same_plaintext_gives_distinct_ciphertexts_per_sequence() {
 
 #[test]
 fn out_of_order_open_fails() {
-    let (sk, pk) = derive_keypair(&ctx_of(CTX), b"stream-ikm-order").unwrap();
+    let (sk, pk) = derive_keypair_from_high_entropy_ikm(
+        &ctx_of(CTX),
+        &SecretBytes::from_slice(b"stream-ikm-order"),
+    )
+    .unwrap();
     let (enc, mut sender) = setup_sender(&ctx_of(CTX), &pk, b"info").unwrap();
 
     let _c0 = sender.seal(b"aad-0", &msg(b"first")).unwrap();
@@ -72,7 +84,11 @@ fn out_of_order_open_fails() {
 
 #[test]
 fn wrong_aad_fails() {
-    let (sk, pk) = derive_keypair(&ctx_of(CTX), b"stream-ikm-aad").unwrap();
+    let (sk, pk) = derive_keypair_from_high_entropy_ikm(
+        &ctx_of(CTX),
+        &SecretBytes::from_slice(b"stream-ikm-aad"),
+    )
+    .unwrap();
     let (enc, mut sender) = setup_sender(&ctx_of(CTX), &pk, b"info").unwrap();
     let c0 = sender.seal(b"bound-aad", &msg(b"payload")).unwrap();
 
@@ -82,7 +98,11 @@ fn wrong_aad_fails() {
 
 #[test]
 fn tampered_ciphertext_fails() {
-    let (sk, pk) = derive_keypair(&ctx_of(CTX), b"stream-ikm-tamper").unwrap();
+    let (sk, pk) = derive_keypair_from_high_entropy_ikm(
+        &ctx_of(CTX),
+        &SecretBytes::from_slice(b"stream-ikm-tamper"),
+    )
+    .unwrap();
     let (enc, mut sender) = setup_sender(&ctx_of(CTX), &pk, b"info").unwrap();
     let c0 = sender.seal(b"aad", &msg(b"payload")).unwrap();
 
@@ -92,4 +112,25 @@ fn tampered_ciphertext_fails() {
 
     let mut receiver = setup_receiver(&ctx_of(CTX), &sk, &enc, b"info").unwrap();
     assert!(receiver.open(b"aad", &tampered).is_err());
+}
+
+#[test]
+fn open_failure_poisons_session() {
+    let (sk, pk) = derive_keypair_from_high_entropy_ikm(
+        &ctx_of(CTX),
+        &SecretBytes::from_slice(b"stream-ikm-poison"),
+    )
+    .unwrap();
+    let (enc, mut sender) = setup_sender(&ctx_of(CTX), &pk, b"info").unwrap();
+    let c0 = sender.seal(b"aad-0", &msg(b"first")).unwrap();
+
+    let mut receiver = setup_receiver(&ctx_of(CTX), &sk, &enc, b"info").unwrap();
+    assert!(
+        receiver.open(b"wrong-aad", &c0).is_err(),
+        "bad aad must fail"
+    );
+    assert!(
+        receiver.open(b"aad-0", &c0).is_err(),
+        "a valid ciphertext must still fail once the session is poisoned"
+    );
 }

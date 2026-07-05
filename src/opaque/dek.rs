@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 use crate::crypto::context::Context;
-use crate::crypto::{aead, kdf, keys};
+use crate::crypto::{aead, kdf};
 use crate::error::{LithiumError, Result};
 use crate::public::PublicBytes;
 use crate::secrets::bytes::SecretBytes;
@@ -29,11 +29,9 @@ pub fn wrap_dek_under_export_key(
     aad: &[u8],
 ) -> Result<SecretString> {
     let key = wrap_key(export_key, aad)?;
-    let nonce = keys::random_12()?;
     let blob = aead::encrypt(
         &SecretBytes::from_slice(dek.expose_as_slice()),
         &key,
-        &nonce,
         &dek_ctx()?,
         aad,
     )?;

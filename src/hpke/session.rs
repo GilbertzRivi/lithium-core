@@ -30,6 +30,7 @@ pub struct HpkeSenderContext {
 pub struct HpkeReceiverContext {
     ctx: HpkeContext,
     seq: u64,
+    poisoned: bool,
 }
 
 pub fn setup_sender(
@@ -59,6 +60,7 @@ pub fn setup_receiver(
     Ok(HpkeReceiverContext {
         ctx: hpke_ctx,
         seq: 0,
+        poisoned: false,
     })
 }
 
@@ -76,8 +78,17 @@ impl HpkeSenderContext {
 
 impl HpkeReceiverContext {
     pub fn open(&mut self, aad: &[u8], ciphertext: &PublicBytes) -> Result<SecretBytes> {
+        if self.poisoned {
+            return Err(LithiumError::internal("hpke_session_poisoned"));
+        }
         let nonce = seq_nonce(&self.ctx.base_nonce, self.seq)?;
-        let pt = aead::decrypt_raw(ciphertext, &self.ctx.key, &nonce, aad)?;
+        let pt = match aead::decrypt_raw(ciphertext, &self.ctx.key, &nonce, aad) {
+            Ok(pt) => pt,
+            Err(e) => {
+                self.poisoned = true;
+                return Err(e);
+            }
+        };
         self.seq = self
             .seq
             .checked_add(1)

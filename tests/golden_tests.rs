@@ -115,7 +115,11 @@ fn hpke_derive_keypair_matches_pinned_vector() {
     let v = hpke_vectors();
     let ikm = hex::decode(v["KP_IKM"]).unwrap();
 
-    let (sk, pk) = hpke::derive_keypair(&ctx_of(v["KP_CTX"]), &ikm).unwrap();
+    let (sk, pk) = hpke::derive_keypair_from_high_entropy_ikm(
+        &ctx_of(v["KP_CTX"]),
+        &SecretBytes::from_slice(&ikm),
+    )
+    .unwrap();
     let pk_wire = pk.to_wire();
 
     assert_eq!(hex::encode(&pk_wire[..32]), v["KP_X_PUB"]);
@@ -132,8 +136,11 @@ fn hpke_derive_keypair_matches_pinned_vector() {
 #[test]
 fn hpke_sealed_opens_to_pinned_plaintext() {
     let v = hpke_vectors();
-    let (sk, _) =
-        hpke::derive_keypair(&ctx_of(v["KP_CTX"]), &hex::decode(v["KP_IKM"]).unwrap()).unwrap();
+    let (sk, _) = hpke::derive_keypair_from_high_entropy_ikm(
+        &ctx_of(v["KP_CTX"]),
+        &SecretBytes::from_slice(&hex::decode(v["KP_IKM"]).unwrap()),
+    )
+    .unwrap();
     let sk_wire = sk.to_wire();
     let sk_wire = sk_wire.expose_as_slice();
     let x_priv = SecByte32::from_slice(&sk_wire[..32]).unwrap();
@@ -179,8 +186,11 @@ fn hpke_sealed_opens_to_pinned_plaintext() {
 #[test]
 fn hpke_export_reproduces_pinned_secret() {
     let v = hpke_vectors();
-    let (sk, _) =
-        hpke::derive_keypair(&ctx_of(v["KP_CTX"]), &hex::decode(v["KP_IKM"]).unwrap()).unwrap();
+    let (sk, _) = hpke::derive_keypair_from_high_entropy_ikm(
+        &ctx_of(v["KP_CTX"]),
+        &SecretBytes::from_slice(&hex::decode(v["KP_IKM"]).unwrap()),
+    )
+    .unwrap();
     let enc = HpkeEnc::from_wire(&hex::decode(v["ENC2"]).unwrap()).unwrap();
 
     let exported = hpke::setup_receiver_and_export(

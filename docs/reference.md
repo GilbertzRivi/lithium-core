@@ -61,8 +61,8 @@ separators. The safe path is the only path.
 AES-256-GCM-SIV with an authenticated ciphertext (AEAD).
 
 ```
-encrypt(plaintext: &SecretBytes, key, nonce, ctx: &Context, aad) -> PublicBytes   // versioned blob with nonce
-decrypt(blob: &PublicBytes, key, ctx: &Context, aad) -> SecretBytes               // parses the blob automatically
+encrypt(plaintext: &SecretBytes, key, ctx: &Context, aad) -> PublicBytes   // versioned blob, random nonce
+decrypt(blob: &PublicBytes, key, ctx: &Context, aad) -> SecretBytes        // parses the blob automatically
 ```
 
 Plaintext is a `SecretBytes`; the resulting ciphertext/blob is public
@@ -70,6 +70,9 @@ wire data, so it is returned as `PublicBytes` (and consumed as
 `&PublicBytes` on the way back in). The effective AEAD associated data
 is `ctx` bound with the caller's `aad`, so a ciphertext only
 authenticates under the same `Context`; `aad` is a plain `&[u8]`.
+
+`encrypt` draws a fresh random nonce and embeds it in the blob; callers
+never supply or manage a nonce.
 
 `encrypt` blob format:
 ```
@@ -222,16 +225,20 @@ info, along with `SHA256(ct_kem)`.
 Interface:
 
 ```
-seal(ctx: &Context, priv_x, peer_pub_x: &PubByte32, peer_k_pub: &PublicBytes,
-     aad: &[u8], data) -> KyberBoxSealed
-open(ctx: &Context, priv_x, peer_pub_x: &PubByte32, kyber_priv,
+seal(ctx: &Context, peer_pub_x: &PubByte32, peer_k_pub: &PublicBytes,
+     aad: &[u8], data) -> (KyberBoxSealed, SecByte32)
+open(ctx: &Context, priv_x, kyber_priv,
      aad: &[u8], sealed: &KyberBoxSealed) -> SecretBytes
 ```
 
-The sender's X25519 secret (`priv_x`) and the recipient's ML-KEM
-secret (`kyber_priv`) are secret types; the peer public keys are
-public types. `ctx` is a [`Context`](#cryptocontext-domain-separation-labels)
-that separates domains.
+`seal` draws a fresh ephemeral X25519 keypair per call; its public half
+rides inside `KyberBoxSealed`, and the returned `SecByte32` is the
+matching secret. Drop it for one-shot anonymous sealing, or keep it to
+open a reply encrypted against that ephemeral public key. Callers cannot
+supply or reuse the sender key. The recipient's ML-KEM secret
+(`kyber_priv`) and X25519 secret (`priv_x`, at `open`) are secret types;
+the peer public keys are public types. `ctx` is a
+[`Context`](#cryptocontext-domain-separation-labels) that separates domains.
 
 `aad` is an optional caller-supplied AAD, for binding the ciphertext to
 an external header or transcript. When non-empty it is appended to the
@@ -256,7 +263,8 @@ secret-export mode. Only the base (unauthenticated-sender) mode is
 provided.
 
 ```
-derive_keypair(ctx: &Context, ikm) -> (HpkePrivateKey, HpkePublicKey)   // deterministic from ikm
+derive_keypair_from_high_entropy_ikm(ctx: &Context, ikm: &SecretBytes) -> (HpkePrivateKey, HpkePublicKey)   // deterministic
+random_keypair(ctx: &Context) -> (HpkePrivateKey, HpkePublicKey)   // fresh random ikm
 
 seal_base(ctx: &Context, recipient_x_pub: &PubByte32, recipient_k_pub: &PublicBytes,
           info, aad, plaintext: &SecretBytes) -> HpkeSealed
@@ -281,11 +289,15 @@ derivation, the KEM, and the key schedule. Do not confuse it with the
 per-session `HpkeSenderContext` / `HpkeReceiverContext` below (an RFC
 9180 term for the established encryption state).
 
-`derive_keypair` derives both halves deterministically from `ikm`, so
-the same seed always yields the same keypair. `info` binds the key
-schedule; `aad` binds the AEAD. The export mode derives an
-independent shared secret of `exporter_length` bytes and never fails
-authentication (a mismatch simply yields a different secret).
+`derive_keypair_from_high_entropy_ikm` derives both halves
+deterministically from `ikm`, so the same seed always yields the same
+keypair. `ikm` must be at least 32 bytes of high-entropy randomness;
+low-entropy material (passwords, tokens) yields a keypair open to
+offline guessing, so stretch such secrets with Argon2id/OPAQUE first or
+use `random_keypair`. `info` binds the key schedule; `aad` binds the
+AEAD. The export mode derives an independent shared secret of
+`exporter_length` bytes and never fails authentication (a mismatch
+simply yields a different secret).
 
 The multi-message context (RFC 9180 section 5.2) runs the hybrid KEM once and
 then seals each message under nonce `base_nonce XOR seq`, incrementing
@@ -294,7 +306,9 @@ message N opens only when the receiver is at sequence N. A dropped or
 reordered message desynchronizes the stream, so the caller supplies
 ordering and any truncation protection (a chunked "streaming AEAD" over
 large data is built on top: export a secret with `setup_sender_and_export`
-and drive `crypto::aead` directly).
+and drive `crypto::aead` directly). A failed `open` poisons the receiver
+context: `seq` cannot be safely advanced past a failure, so every later
+`open` returns an error and the session must be abandoned.
 
 Wire types (public material is public-typed; ciphertext is
 `PublicBytes`):
@@ -789,9 +803,11 @@ server_registration_finish(upload_bytes) -> record   // persist per user
 ```
 
 `ksf_params: crypto::kdf::Argon2Params` is the Argon2id cost profile
-(`Argon2Params::default()` is the OWASP baseline). The same params must
-be used at registration and at every later login, or the export key
-changes and login fails; persist your choice.
+(`Argon2Params::default()` is the OWASP baseline). `Argon2Params::new`
+rejects parameters below an operational minimum, so it cannot build a
+trivially weak profile. The same params must be used at registration and
+at every later login, or the export key changes and login fails; persist
+your choice.
 
 **Login** (`opaque::client` / `opaque::server`):
 

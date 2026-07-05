@@ -7,8 +7,8 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use crate::crypto::aead;
 use crate::crypto::context::Context;
-use crate::crypto::{aead, keys};
 use crate::error::{LithiumError, Result};
 use crate::public::PublicBytes;
 use crate::secrets::SecByte32;
@@ -172,8 +172,7 @@ impl EphemeralStoreManager {
 
     fn seal(&self, hkey: &str, value: &SecretBytes) -> Result<SecretBytes> {
         let key = SecByte32::from_slice(self.shared.key.expose_as_slice())?;
-        let nonce = keys::random_12()?;
-        let blob = aead::encrypt(value, &key, &nonce, &store_ctx()?, hkey.as_bytes())?;
+        let blob = aead::encrypt(value, &key, &store_ctx()?, hkey.as_bytes())?;
         Ok(SecretBytes::from_slice(blob.as_slice()))
     }
 

@@ -24,7 +24,7 @@ fn ctx_of(s: &str) -> Context<'_> {
 }
 
 fn kp(ctx: &str, ikm: &[u8]) -> (HpkePrivateKey, HpkePublicKey) {
-    hpke::derive_keypair(&ctx_of(ctx), ikm).unwrap()
+    hpke::derive_keypair_from_high_entropy_ikm(&ctx_of(ctx), &SecretBytes::from_slice(ikm)).unwrap()
 }
 
 fn pub_raw(pk: &HpkePublicKey) -> (PubByte32, PublicBytes) {

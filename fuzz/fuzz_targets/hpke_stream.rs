@@ -9,6 +9,7 @@ use libfuzzer_sys::fuzz_target;
 use lithium_core::crypto::context::Context;
 use lithium_core::hpke::{self, HpkeEnc, HpkePrivateKey};
 use lithium_core::public::PublicBytes;
+use lithium_core::secrets::SecretBytes;
 
 static SETUP: OnceLock<(HpkePrivateKey, HpkeEnc)> = OnceLock::new();
 static CTX: OnceLock<Context<'static>> = OnceLock::new();
@@ -19,7 +20,11 @@ fn ctx() -> &'static Context<'static> {
 
 fn setup() -> &'static (HpkePrivateKey, HpkeEnc) {
     SETUP.get_or_init(|| {
-        let (sk, pk) = hpke::derive_keypair(ctx(), b"fuzz-recipient").unwrap();
+        let (sk, pk) = hpke::derive_keypair_from_high_entropy_ikm(
+            ctx(),
+            &SecretBytes::from_slice(b"fuzz-recipient"),
+        )
+        .unwrap();
         let (enc, _sender) = hpke::setup_sender(ctx(), &pk, b"info").unwrap();
         (sk, enc)
     })

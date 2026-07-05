@@ -4,7 +4,7 @@
 use lithium_core::crypto::{Context, aead, kdf, keys, kyberbox, sign};
 use lithium_core::error::{ErrorKind, Result};
 use lithium_core::public::{PubByte32, PublicBytes};
-use lithium_core::secrets::{SecByte12, SecByte32, SecByte64, SecretBytes};
+use lithium_core::secrets::{SecByte32, SecByte64, SecretBytes};
 
 fn actx() -> Context<'static> {
     Context::base("test").unwrap().add("aead").unwrap()
@@ -18,8 +18,8 @@ fn sctx() -> Context<'static> {
     Context::base("test").unwrap().add("sign").unwrap()
 }
 
-fn aenc(pt: &SecretBytes, key: &SecByte32, nonce: &SecByte12, aad: &[u8]) -> Result<PublicBytes> {
-    aead::encrypt(pt, key, nonce, &actx(), aad)
+fn aenc(pt: &SecretBytes, key: &SecByte32, aad: &[u8]) -> Result<PublicBytes> {
+    aead::encrypt(pt, key, &actx(), aad)
 }
 
 fn adec(blob: &PublicBytes, key: &SecByte32, aad: &[u8]) -> Result<SecretBytes> {
@@ -67,18 +67,13 @@ fn key32(fill: u8) -> SecByte32 {
     SecByte32::new([fill; 32])
 }
 
-fn nonce12(fill: u8) -> SecByte12 {
-    SecByte12::new([fill; 12])
-}
-
 #[test]
 fn aead_raw_roundtrip() {
     let key = key32(0xAA);
-    let nonce = nonce12(0x01);
     let plaintext = sb(b"hello aead");
     let aad = b"some-context";
 
-    let blob = aenc(&plaintext, &key, &nonce, aad).unwrap();
+    let blob = aenc(&plaintext, &key, aad).unwrap();
     let pt = adec(&blob, &key, aad).unwrap();
 
     assert_eq!(pt.expose_as_slice(), plaintext.expose_as_slice());
@@ -87,11 +82,10 @@ fn aead_raw_roundtrip() {
 #[test]
 fn aead_blob_roundtrip() {
     let key = key32(0xBB);
-    let nonce = nonce12(0x02);
     let plaintext = sb(b"blob roundtrip test");
     let aad = b"aad-blob";
 
-    let blob = aenc(&plaintext, &key, &nonce, aad).unwrap();
+    let blob = aenc(&plaintext, &key, aad).unwrap();
     let recovered = adec(&blob, &key, aad).unwrap();
 
     assert_eq!(recovered.expose_as_slice(), plaintext.expose_as_slice());
@@ -100,31 +94,17 @@ fn aead_blob_roundtrip() {
 #[test]
 fn aead_blob_starts_with_version_byte() {
     let key = key32(0x01);
-    let nonce = nonce12(0x00);
-    let blob = aenc(&sb(b"x"), &key, &nonce, b"aad").unwrap();
+    let blob = aenc(&sb(b"x"), &key, b"aad").unwrap();
     assert_eq!(blob.as_slice()[0], 1, "first byte must be version 1");
-}
-
-#[test]
-fn aead_blob_nonce_embedded() {
-    let key = key32(0x01);
-    let nonce = nonce12(0xCC);
-    let blob = aenc(&sb(b"data"), &key, &nonce, b"aad").unwrap();
-    assert_eq!(
-        &blob.as_slice()[1..13],
-        &[0xCC; 12],
-        "nonce must be at bytes 1..13"
-    );
 }
 
 #[test]
 fn aead_wrong_key_fails() {
     let key = key32(0x10);
     let wrong_key = key32(0x11);
-    let nonce = nonce12(0x03);
     let aad = b"ctx";
 
-    let blob = aenc(&sb(b"secret"), &key, &nonce, aad).unwrap();
+    let blob = aenc(&sb(b"secret"), &key, aad).unwrap();
     let err = adec(&blob, &wrong_key, aad).unwrap_err();
     assert_eq!(err.kind, ErrorKind::AeadFailed);
 }
@@ -132,9 +112,8 @@ fn aead_wrong_key_fails() {
 #[test]
 fn aead_wrong_aad_fails() {
     let key = key32(0x20);
-    let nonce = nonce12(0x04);
 
-    let blob = aenc(&sb(b"secret"), &key, &nonce, b"correct-aad").unwrap();
+    let blob = aenc(&sb(b"secret"), &key, b"correct-aad").unwrap();
     let err = adec(&blob, &key, b"wrong-aad").unwrap_err();
     assert_eq!(err.kind, ErrorKind::AeadFailed);
 }
@@ -142,11 +121,10 @@ fn aead_wrong_aad_fails() {
 #[test]
 fn aead_tampered_ciphertext_fails() {
     let key = key32(0x30);
-    let nonce = nonce12(0x05);
     let aad = b"tamper-test";
 
     let mut blob_vec = {
-        let blob = aenc(&sb(b"original"), &key, &nonce, aad).unwrap();
+        let blob = aenc(&sb(b"original"), &key, aad).unwrap();
         blob.as_slice().to_vec()
     };
     let last = blob_vec.len() - 1;
@@ -160,10 +138,9 @@ fn aead_tampered_ciphertext_fails() {
 #[test]
 fn aead_empty_plaintext() {
     let key = key32(0xAB);
-    let nonce = nonce12(0x06);
     let aad = b"empty";
 
-    let blob = aenc(&sb(b""), &key, &nonce, aad).unwrap();
+    let blob = aenc(&sb(b""), &key, aad).unwrap();
     let pt = adec(&blob, &key, aad).unwrap();
     assert!(pt.expose_as_slice().is_empty());
 }
@@ -171,11 +148,10 @@ fn aead_empty_plaintext() {
 #[test]
 fn aead_large_plaintext() {
     let key = key32(0xCD);
-    let nonce = nonce12(0x07);
     let aad = b"large";
     let big = vec![0x42u8; 65536];
 
-    let blob = aenc(&sb(&big), &key, &nonce, aad).unwrap();
+    let blob = aenc(&sb(&big), &key, aad).unwrap();
     let pt = adec(&blob, &key, aad).unwrap();
     assert_eq!(pt.expose_as_slice(), big.as_slice());
 }
@@ -183,8 +159,7 @@ fn aead_large_plaintext() {
 #[test]
 fn aead_truncated_blob_fails() {
     let key = key32(0x01);
-    let nonce = nonce12(0x00);
-    let blob = aenc(&sb(b"data"), &key, &nonce, b"aad").unwrap();
+    let blob = aenc(&sb(b"data"), &key, b"aad").unwrap();
 
     let short = pb(&blob.as_slice()[..10]);
     assert!(adec(&short, &key, b"aad").is_err());
@@ -414,21 +389,13 @@ fn kyberbox_alice_bob() -> (
 
 #[test]
 fn kyberbox_roundtrip_body_and_headers() {
-    let (alice_x_sk, _alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
+    let (_alice_x_sk, _alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
 
     let body = sb(b"secret message");
     let ctx = "test-context";
 
-    let wire = kyberbox::seal(
-        &ctx_of(ctx),
-        &alice_x_sk,
-        &bob_x_pk,
-        &bob_kyber_pk,
-        b"",
-        &body,
-    )
-    .unwrap();
+    let (wire, _) = kyberbox::seal(&ctx_of(ctx), &bob_x_pk, &bob_kyber_pk, b"", &body).unwrap();
     let dec_body = kyberbox::open(&ctx_of(ctx), &bob_x_sk, &bob_kyber_sk, b"", &wire).unwrap();
 
     assert_eq!(dec_body.expose_as_slice(), body.expose_as_slice());
@@ -436,11 +403,10 @@ fn kyberbox_roundtrip_body_and_headers() {
 
 #[test]
 fn kyberbox_sealed_wire_roundtrips_and_opens() {
-    let (alice_x_sk, _alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
+    let (_alice_x_sk, _alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
-    let wire = kyberbox::seal(
+    let (wire, _) = kyberbox::seal(
         &ctx_of("wire"),
-        &alice_x_sk,
         &bob_x_pk,
         &bob_kyber_pk,
         b"",
@@ -458,18 +424,11 @@ fn kyberbox_sealed_wire_roundtrips_and_opens() {
 
 #[test]
 fn kyberbox_empty_payload() {
-    let (alice_x_sk, _alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
+    let (_alice_x_sk, _alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
 
-    let wire = kyberbox::seal(
-        &ctx_of("ctx"),
-        &alice_x_sk,
-        &bob_x_pk,
-        &bob_kyber_pk,
-        b"",
-        &sb(b""),
-    )
-    .unwrap();
+    let (wire, _) =
+        kyberbox::seal(&ctx_of("ctx"), &bob_x_pk, &bob_kyber_pk, b"", &sb(b"")).unwrap();
     let body = kyberbox::open(&ctx_of("ctx"), &bob_x_sk, &bob_kyber_sk, b"", &wire).unwrap();
 
     assert!(body.expose_as_slice().is_empty());
@@ -477,18 +436,11 @@ fn kyberbox_empty_payload() {
 
 #[test]
 fn kyberbox_wrong_x25519_key_fails() {
-    let (alice_x_sk, _alice_x_pk, bob_kyber_sk, bob_kyber_pk, _bob_x_sk, bob_x_pk) =
+    let (_alice_x_sk, _alice_x_pk, bob_kyber_sk, bob_kyber_pk, _bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
 
-    let wire = kyberbox::seal(
-        &ctx_of("ctx"),
-        &alice_x_sk,
-        &bob_x_pk,
-        &bob_kyber_pk,
-        b"",
-        &sb(b"data"),
-    )
-    .unwrap();
+    let (wire, _) =
+        kyberbox::seal(&ctx_of("ctx"), &bob_x_pk, &bob_kyber_pk, b"", &sb(b"data")).unwrap();
 
     let (wrong_x_sk, _) = keys::ephemeral_x25519_keypair().unwrap();
     let result = kyberbox::open(&ctx_of("ctx"), &wrong_x_sk, &bob_kyber_sk, b"", &wire);
@@ -497,12 +449,11 @@ fn kyberbox_wrong_x25519_key_fails() {
 
 #[test]
 fn kyberbox_aad_binds_ciphertext() {
-    let (alice_x_sk, _alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
+    let (_alice_x_sk, _alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
 
-    let wire = kyberbox::seal(
+    let (wire, _) = kyberbox::seal(
         &ctx_of("ctx"),
-        &alice_x_sk,
         &bob_x_pk,
         &bob_kyber_pk,
         b"header-v1",
@@ -523,18 +474,11 @@ fn kyberbox_aad_binds_ciphertext() {
 
 #[test]
 fn kyberbox_wrong_kyber_key_fails() {
-    let (alice_x_sk, _alice_x_pk, _bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
+    let (_alice_x_sk, _alice_x_pk, _bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
 
-    let wire = kyberbox::seal(
-        &ctx_of("ctx"),
-        &alice_x_sk,
-        &bob_x_pk,
-        &bob_kyber_pk,
-        b"",
-        &sb(b"data"),
-    )
-    .unwrap();
+    let (wire, _) =
+        kyberbox::seal(&ctx_of("ctx"), &bob_x_pk, &bob_kyber_pk, b"", &sb(b"data")).unwrap();
 
     let (wrong_kyber_sk, _) = keys::ephemeral_kyber_mlkem1024_keypair().unwrap();
     let result = kyberbox::open(&ctx_of("ctx"), &bob_x_sk, &wrong_kyber_sk, b"", &wire);
@@ -543,12 +487,11 @@ fn kyberbox_wrong_kyber_key_fails() {
 
 #[test]
 fn kyberbox_different_contexts_incompatible() {
-    let (alice_x_sk, _alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
+    let (_alice_x_sk, _alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
 
-    let wire = kyberbox::seal(
+    let (wire, _) = kyberbox::seal(
         &ctx_of("context-a"),
-        &alice_x_sk,
         &bob_x_pk,
         &bob_kyber_pk,
         b"",
@@ -561,14 +504,13 @@ fn kyberbox_different_contexts_incompatible() {
 
 #[test]
 fn kyberbox_large_payload() {
-    let (alice_x_sk, _alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
+    let (_alice_x_sk, _alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
 
     let big_data = vec![0xABu8; 16384];
 
-    let wire = kyberbox::seal(
+    let (wire, _) = kyberbox::seal(
         &ctx_of("large"),
-        &alice_x_sk,
         &bob_x_pk,
         &bob_kyber_pk,
         b"",
@@ -583,8 +525,7 @@ fn kyberbox_large_payload() {
 #[test]
 fn aead_wrong_version_byte_fails() {
     let key = key32(0x01);
-    let nonce = nonce12(0x00);
-    let mut blob = aenc(&sb(b"data"), &key, &nonce, b"aad")
+    let mut blob = aenc(&sb(b"data"), &key, b"aad")
         .unwrap()
         .as_slice()
         .to_vec();
@@ -595,8 +536,7 @@ fn aead_wrong_version_byte_fails() {
 #[test]
 fn aead_version_zero_fails() {
     let key = key32(0x01);
-    let nonce = nonce12(0x00);
-    let mut blob = aenc(&sb(b"data"), &key, &nonce, b"aad")
+    let mut blob = aenc(&sb(b"data"), &key, b"aad")
         .unwrap()
         .as_slice()
         .to_vec();
@@ -605,37 +545,10 @@ fn aead_version_zero_fails() {
 }
 
 #[test]
-fn aead_bit_flip_in_nonce_fails() {
-    let key = key32(0x50);
-    let nonce = nonce12(0x10);
-    let aad = b"ctx";
-    let mut blob = aenc(&sb(b"payload"), &key, &nonce, aad)
-        .unwrap()
-        .as_slice()
-        .to_vec();
-    blob[1] ^= 0x01;
-    assert!(adec(&pb(&blob), &key, aad).is_err());
-}
-
-#[test]
-fn aead_bit_flip_in_nonce_last_byte_fails() {
-    let key = key32(0x51);
-    let nonce = nonce12(0x11);
-    let aad = b"ctx";
-    let mut blob = aenc(&sb(b"payload"), &key, &nonce, aad)
-        .unwrap()
-        .as_slice()
-        .to_vec();
-    blob[12] ^= 0x80;
-    assert!(adec(&pb(&blob), &key, aad).is_err());
-}
-
-#[test]
 fn aead_bit_flip_in_ciphertext_first_byte_fails() {
     let key = key32(0x52);
-    let nonce = nonce12(0x12);
     let aad = b"ctx";
-    let mut blob = aenc(&sb(b"hello world!!"), &key, &nonce, aad)
+    let mut blob = aenc(&sb(b"hello world!!"), &key, aad)
         .unwrap()
         .as_slice()
         .to_vec();
@@ -646,9 +559,8 @@ fn aead_bit_flip_in_ciphertext_first_byte_fails() {
 #[test]
 fn aead_bit_flip_in_auth_tag_fails() {
     let key = key32(0x53);
-    let nonce = nonce12(0x13);
     let aad = b"ctx";
-    let mut blob = aenc(&sb(b"message"), &key, &nonce, aad)
+    let mut blob = aenc(&sb(b"message"), &key, aad)
         .unwrap()
         .as_slice()
         .to_vec();
@@ -660,24 +572,21 @@ fn aead_bit_flip_in_auth_tag_fails() {
 #[test]
 fn aead_aad_differs_by_one_byte_at_end_fails() {
     let key = key32(0x54);
-    let nonce = nonce12(0x14);
-    let blob = aenc(&sb(b"secret"), &key, &nonce, b"correct-aad").unwrap();
+    let blob = aenc(&sb(b"secret"), &key, b"correct-aad").unwrap();
     assert!(adec(&blob, &key, b"correct-aaf").is_err());
 }
 
 #[test]
 fn aead_aad_differs_by_one_byte_at_start_fails() {
     let key = key32(0x55);
-    let nonce = nonce12(0x15);
-    let blob = aenc(&sb(b"secret"), &key, &nonce, b"correct-aad").unwrap();
+    let blob = aenc(&sb(b"secret"), &key, b"correct-aad").unwrap();
     assert!(adec(&blob, &key, b"Xorrect-aad").is_err());
 }
 
 #[test]
 fn aead_empty_aad_roundtrip() {
     let key = key32(0x56);
-    let nonce = nonce12(0x16);
-    let blob = aenc(&sb(b"no-aad"), &key, &nonce, b"").unwrap();
+    let blob = aenc(&sb(b"no-aad"), &key, b"").unwrap();
     let pt = adec(&blob, &key, b"").unwrap();
     assert_eq!(pt.expose_as_slice(), b"no-aad");
 }
@@ -685,52 +594,33 @@ fn aead_empty_aad_roundtrip() {
 #[test]
 fn aead_non_empty_aad_not_accepted_as_empty() {
     let key = key32(0x57);
-    let nonce = nonce12(0x17);
-    let blob = aenc(&sb(b"x"), &key, &nonce, b"real-aad").unwrap();
+    let blob = aenc(&sb(b"x"), &key, b"real-aad").unwrap();
     assert!(adec(&blob, &key, b"").is_err());
 }
 
 #[test]
 fn aead_roundtrip_various_sizes() {
     let key = key32(0x58);
-    let nonce = nonce12(0x18);
     let aad = b"size-sweep";
     for &size in &[0usize, 1, 7, 15, 16, 17, 31, 32, 33, 100, 1024, 8192] {
         let pt = vec![0x42u8; size];
-        let blob = aenc(&sb(&pt), &key, &nonce, aad).unwrap();
+        let blob = aenc(&sb(&pt), &key, aad).unwrap();
         let recovered = adec(&blob, &key, aad).unwrap();
         assert_eq!(recovered.expose_as_slice(), pt.as_slice(), "size={size}");
     }
 }
 
 #[test]
-fn aead_raw_deterministic_same_inputs() {
-    let key = key32(0x59);
-    let nonce = nonce12(0x19);
-    let pt = sb(b"deterministic-test");
-    let aad = b"ctx";
-    let ct1 = aenc(&pt, &key, &nonce, aad).unwrap();
-    let ct2 = aenc(&pt, &key, &nonce, aad).unwrap();
-    assert_eq!(
-        ct1.as_slice(),
-        ct2.as_slice(),
-        "AEAD-GCM-SIV must be deterministic for identical inputs"
-    );
-}
-
-#[test]
 fn aead_min_size_blob_29_bytes() {
     let key = key32(0x5A);
-    let nonce = nonce12(0x1A);
-    let blob = aenc(&sb(b""), &key, &nonce, b"").unwrap();
+    let blob = aenc(&sb(b""), &key, b"").unwrap();
     assert_eq!(blob.as_slice().len(), 29, "min blob size must be 29");
 }
 
 #[test]
 fn aead_28_bytes_too_short_fails() {
     let key = key32(0x5B);
-    let nonce = nonce12(0x1B);
-    let blob = aenc(&sb(b""), &key, &nonce, b"").unwrap();
+    let blob = aenc(&sb(b""), &key, b"").unwrap();
     let short = pb(&blob.as_slice()[..28]);
     assert!(adec(&short, &key, b"").is_err());
 }
@@ -862,17 +752,10 @@ fn kb_wire(sender_x_pub: &[u8], kem_ct: &[u8], ct: &[u8]) -> Vec<u8> {
 }
 
 fn kyberbox_corrupt_kem_byte_at(offset: usize) {
-    let (alice_x_sk, _alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
+    let (_alice_x_sk, _alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
-    let wire = kyberbox::seal(
-        &ctx_of("ctx"),
-        &alice_x_sk,
-        &bob_x_pk,
-        &bob_kyber_pk,
-        b"",
-        &sb(b"body"),
-    )
-    .unwrap();
+    let (wire, _) =
+        kyberbox::seal(&ctx_of("ctx"), &bob_x_pk, &bob_kyber_pk, b"", &sb(b"body")).unwrap();
 
     let mut kem_bytes = wire.kem_ct().as_slice().to_vec();
     assert!(offset < kem_bytes.len());
@@ -912,17 +795,10 @@ fn kyberbox_corrupt_kem_ciphertext_mid_byte_fails() {
 
 #[test]
 fn kyberbox_truncated_kem_ciphertext_fails() {
-    let (alice_x_sk, _alice_x_pk, _bob_kyber_sk, bob_kyber_pk, _bob_x_sk, bob_x_pk) =
+    let (_alice_x_sk, _alice_x_pk, _bob_kyber_sk, bob_kyber_pk, _bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
-    let wire = kyberbox::seal(
-        &ctx_of("ctx"),
-        &alice_x_sk,
-        &bob_x_pk,
-        &bob_kyber_pk,
-        b"",
-        &sb(b"body"),
-    )
-    .unwrap();
+    let (wire, _) =
+        kyberbox::seal(&ctx_of("ctx"), &bob_x_pk, &bob_kyber_pk, b"", &sb(b"body")).unwrap();
 
     let wire_bytes = kb_wire(
         wire.sender_x_pub().as_slice(),
@@ -937,17 +813,10 @@ fn kyberbox_truncated_kem_ciphertext_fails() {
 
 #[test]
 fn kyberbox_empty_kem_ct_fails() {
-    let (alice_x_sk, _alice_x_pk, _bob_kyber_sk, bob_kyber_pk, _bob_x_sk, bob_x_pk) =
+    let (_alice_x_sk, _alice_x_pk, _bob_kyber_sk, bob_kyber_pk, _bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
-    let wire = kyberbox::seal(
-        &ctx_of("ctx"),
-        &alice_x_sk,
-        &bob_x_pk,
-        &bob_kyber_pk,
-        b"",
-        &sb(b"body"),
-    )
-    .unwrap();
+    let (wire, _) =
+        kyberbox::seal(&ctx_of("ctx"), &bob_x_pk, &bob_kyber_pk, b"", &sb(b"body")).unwrap();
     let wire_bytes = kb_wire(
         wire.sender_x_pub().as_slice(),
         b"",
@@ -961,17 +830,10 @@ fn kyberbox_empty_kem_ct_fails() {
 
 #[test]
 fn kyberbox_corrupt_enc_data_tag_fails() {
-    let (alice_x_sk, _alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
+    let (_alice_x_sk, _alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
-    let wire = kyberbox::seal(
-        &ctx_of("ctx"),
-        &alice_x_sk,
-        &bob_x_pk,
-        &bob_kyber_pk,
-        b"",
-        &sb(b"body"),
-    )
-    .unwrap();
+    let (wire, _) =
+        kyberbox::seal(&ctx_of("ctx"), &bob_x_pk, &bob_kyber_pk, b"", &sb(b"body")).unwrap();
 
     let mut body_bytes = wire.ciphertext().as_slice().to_vec();
     let last = body_bytes.len() - 1;
@@ -988,17 +850,10 @@ fn kyberbox_corrupt_enc_data_tag_fails() {
 
 #[test]
 fn kyberbox_corrupt_enc_data_version_fails() {
-    let (alice_x_sk, _alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
+    let (_alice_x_sk, _alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
-    let wire = kyberbox::seal(
-        &ctx_of("ctx"),
-        &alice_x_sk,
-        &bob_x_pk,
-        &bob_kyber_pk,
-        b"",
-        &sb(b"body"),
-    )
-    .unwrap();
+    let (wire, _) =
+        kyberbox::seal(&ctx_of("ctx"), &bob_x_pk, &bob_kyber_pk, b"", &sb(b"body")).unwrap();
 
     let mut body_bytes = wire.ciphertext().as_slice().to_vec();
     body_bytes[0] ^= 0xFF;
@@ -1014,17 +869,10 @@ fn kyberbox_corrupt_enc_data_version_fails() {
 
 #[test]
 fn kyberbox_truncated_enc_body_fails() {
-    let (alice_x_sk, _alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
+    let (_alice_x_sk, _alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
-    let wire = kyberbox::seal(
-        &ctx_of("ctx"),
-        &alice_x_sk,
-        &bob_x_pk,
-        &bob_kyber_pk,
-        b"",
-        &sb(b"body"),
-    )
-    .unwrap();
+    let (wire, _) =
+        kyberbox::seal(&ctx_of("ctx"), &bob_x_pk, &bob_kyber_pk, b"", &sb(b"body")).unwrap();
 
     let bad = kyberbox::KyberBoxSealed::from_wire(&kb_wire(
         wire.sender_x_pub().as_slice(),
@@ -1037,19 +885,12 @@ fn kyberbox_truncated_enc_body_fails() {
 
 #[test]
 fn kyberbox_roundtrip_various_payload_sizes() {
-    let (alice_x_sk, _alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
+    let (_alice_x_sk, _alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
     for &size in &[0usize, 1, 15, 16, 32, 100, 1024] {
         let body = vec![0xBBu8; size];
-        let wire = kyberbox::seal(
-            &ctx_of("sweep"),
-            &alice_x_sk,
-            &bob_x_pk,
-            &bob_kyber_pk,
-            b"",
-            &sb(&body),
-        )
-        .unwrap();
+        let (wire, _) =
+            kyberbox::seal(&ctx_of("sweep"), &bob_x_pk, &bob_kyber_pk, b"", &sb(&body)).unwrap();
         let dec_data =
             kyberbox::open(&ctx_of("sweep"), &bob_x_sk, &bob_kyber_sk, b"", &wire).unwrap();
         assert_eq!(
@@ -1065,11 +906,10 @@ fn cross_kdf_then_aead_roundtrip() {
     let master = sb(b"master-key-material-for-cross-test");
     let aead_key = kderive32(&master, None, sb(b"aead-key/v1").expose_as_slice()).unwrap();
 
-    let nonce = nonce12(0x42);
     let aad = b"cross-module-aad";
     let plaintext = sb(b"cross module plaintext");
 
-    let blob = aenc(&plaintext, &aead_key, &nonce, aad).unwrap();
+    let blob = aenc(&plaintext, &aead_key, aad).unwrap();
     let recovered = adec(&blob, &aead_key, aad).unwrap();
     assert_eq!(recovered.expose_as_slice(), plaintext.expose_as_slice());
 }
@@ -1080,9 +920,8 @@ fn cross_kdf_derived_keys_not_usable_cross_purpose() {
     let key_a = kderive32(&master, None, sb(b"purpose-a/v1").expose_as_slice()).unwrap();
     let key_b = kderive32(&master, None, sb(b"purpose-b/v1").expose_as_slice()).unwrap();
 
-    let nonce = nonce12(0x43);
     let aad = b"aad";
-    let blob = aenc(&sb(b"secret"), &key_a, &nonce, aad).unwrap();
+    let blob = aenc(&sb(b"secret"), &key_a, aad).unwrap();
 
     assert!(adec(&blob, &key_b, aad).is_err());
 }
@@ -1120,28 +959,12 @@ fn cross_ed25519_and_dili_sigs_are_not_interchangeable() {
 
 #[test]
 fn cross_kyberbox_nondeterministic_wire() {
-    let (alice_x_sk, _alice_x_pk, _bob_kyber_sk, bob_kyber_pk, _bob_x_sk, bob_x_pk) =
+    let (_alice_x_sk, _alice_x_pk, _bob_kyber_sk, bob_kyber_pk, _bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
     let body = sb(b"same body");
 
-    let wire1 = kyberbox::seal(
-        &ctx_of("ctx"),
-        &alice_x_sk,
-        &bob_x_pk,
-        &bob_kyber_pk,
-        b"",
-        &body,
-    )
-    .unwrap();
-    let wire2 = kyberbox::seal(
-        &ctx_of("ctx"),
-        &alice_x_sk,
-        &bob_x_pk,
-        &bob_kyber_pk,
-        b"",
-        &body,
-    )
-    .unwrap();
+    let (wire1, _) = kyberbox::seal(&ctx_of("ctx"), &bob_x_pk, &bob_kyber_pk, b"", &body).unwrap();
+    let (wire2, _) = kyberbox::seal(&ctx_of("ctx"), &bob_x_pk, &bob_kyber_pk, b"", &body).unwrap();
 
     assert_ne!(
         wire1.ciphertext().as_slice(),
@@ -1152,21 +975,19 @@ fn cross_kyberbox_nondeterministic_wire() {
 
 #[test]
 fn kyberbox_cross_ctx_kem_ct_transplant_fails() {
-    let (alice_x_sk, _alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
+    let (_alice_x_sk, _alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
 
-    let wire_alpha = kyberbox::seal(
+    let (wire_alpha, _) = kyberbox::seal(
         &ctx_of("ctx-alpha"),
-        &alice_x_sk,
         &bob_x_pk,
         &bob_kyber_pk,
         b"",
         &sb(b"body"),
     )
     .unwrap();
-    let wire_beta = kyberbox::seal(
+    let (wire_beta, _) = kyberbox::seal(
         &ctx_of("ctx-beta"),
-        &alice_x_sk,
         &bob_x_pk,
         &bob_kyber_pk,
         b"",
@@ -1195,21 +1016,19 @@ fn kyberbox_cross_ctx_kem_ct_transplant_fails() {
 
 #[test]
 fn kyberbox_cross_ctx_enc_body_transplant_fails() {
-    let (alice_x_sk, _alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
+    let (_alice_x_sk, _alice_x_pk, bob_kyber_sk, bob_kyber_pk, bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
 
-    let wire_alpha = kyberbox::seal(
+    let (wire_alpha, _) = kyberbox::seal(
         &ctx_of("ctx-alpha"),
-        &alice_x_sk,
         &bob_x_pk,
         &bob_kyber_pk,
         b"",
         &sb(b"body"),
     )
     .unwrap();
-    let wire_beta = kyberbox::seal(
+    let (wire_beta, _) = kyberbox::seal(
         &ctx_of("ctx-beta"),
-        &alice_x_sk,
         &bob_x_pk,
         &bob_kyber_pk,
         b"",
@@ -1238,14 +1057,13 @@ fn kyberbox_cross_ctx_enc_body_transplant_fails() {
 
 #[test]
 fn kyberbox_wire_replay_to_different_recipient_fails() {
-    let (alice_x_sk, _alice_x_pk, _bob_kyber_sk, bob_kyber_pk, _bob_x_sk, bob_x_pk) =
+    let (_alice_x_sk, _alice_x_pk, _bob_kyber_sk, bob_kyber_pk, _bob_x_sk, bob_x_pk) =
         kyberbox_alice_bob();
     let (carol_x_sk, carol_x_pk, carol_kyber_sk, carol_kyber_pk, _, _) = kyberbox_alice_bob();
     let _ = (carol_x_pk, carol_kyber_pk);
 
-    let wire = kyberbox::seal(
+    let (wire, _) = kyberbox::seal(
         &ctx_of("session-a"),
-        &alice_x_sk,
         &bob_x_pk,
         &bob_kyber_pk,
         b"",

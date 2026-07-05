@@ -44,8 +44,6 @@ decapsulation key is rebuilt on use.
 
 The caller provides:
 
-- `priv_x`: sender's ephemeral X25519 private key (fresh per 
-  message)
 - `peer_pub_x`: recipient's X25519 public key (their reply/ratchet 
   key)
 - `peer_k_pub`: recipient's ML-KEM-1024 public key
@@ -55,6 +53,10 @@ The caller provides:
   suffix is added by the library)
 - `aad`: optional caller-supplied AAD (`&[u8]`, may be empty) for
   binding the ciphertext to an external header/transcript
+
+`seal` draws the sender's ephemeral X25519 private key (`priv_x`, fresh
+per message) from the CSRNG and returns it alongside the sealed message;
+the caller cannot supply or reuse it.
 
 ```
 msg_x_priv (32B) <-- CSRNG  -->  msg_x_pub (ct_T, the sender's ephemeral X25519 public key)

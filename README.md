@@ -61,17 +61,15 @@ let ctx = Context::base("myapp")?.add("message")?;
 
 let (recipient_priv_x, recipient_pub_x) = keys::ephemeral_x25519_keypair()?;
 let (recipient_kyber_priv, recipient_kyber_pub) = keys::ephemeral_kyber_mlkem1024_keypair()?;
-// Sender's ephemeral X25519 key; its public half is carried inside `wire`.
-let (sender_priv_x, _sender_pub_x) = keys::ephemeral_x25519_keypair()?;
 
 let body = SecretBytes::from_slice(b"Hello world!");
 
+// `seal` draws a fresh ephemeral sender key per call; its public half is
+// carried inside `wire`. It also returns the matching secret: drop it for
+// one-shot anonymous sealing, or keep it to open a reply.
 // `aad` is an optional caller header bound into the ciphertext (b"" = none).
-// `wire` (KyberBoxSealed { sender_x_pub, kem_ct, ciphertext }) is self-contained:
-// it carries everything `open` needs besides the recipient's own private keys.
-let wire = kyberbox::seal(
+let (wire, _sender_priv_x) = kyberbox::seal(
     &ctx,
-    &sender_priv_x,
     &recipient_pub_x,
     &recipient_kyber_pub,
     b"",

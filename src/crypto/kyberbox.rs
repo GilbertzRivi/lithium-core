@@ -215,23 +215,25 @@ pub(crate) fn prep_base_key_for_decryption(
 
 pub fn seal(
     ctx: &Context,
-    priv_x: impl AsRef<[u8]>,
     peer_pub_x: &PubByte32,
     peer_k_pub: &PublicBytes,
     aad: &[u8],
     data: &SecretBytes,
-) -> Result<KyberBoxSealed> {
+) -> Result<(KyberBoxSealed, SecByte32)> {
+    let (sender_priv_x, _) = keys::ephemeral_x25519_keypair()?;
     let (base_key, kem_ct, sender_x_pub) =
-        prep_base_key_for_encryption(ctx, priv_x, peer_pub_x, peer_k_pub)?;
-    let nonce = keys::random_12()?;
+        prep_base_key_for_encryption(ctx, sender_priv_x.expose_as_slice(), peer_pub_x, peer_k_pub)?;
     let data_ctx = ctx.add("data")?;
-    let ciphertext = aead::encrypt(data, &base_key, &nonce, &data_ctx, aad)?;
+    let ciphertext = aead::encrypt(data, &base_key, &data_ctx, aad)?;
 
-    Ok(KyberBoxSealed {
-        sender_x_pub,
-        kem_ct,
-        ciphertext,
-    })
+    Ok((
+        KyberBoxSealed {
+            sender_x_pub,
+            kem_ct,
+            ciphertext,
+        },
+        sender_priv_x,
+    ))
 }
 
 pub fn open(

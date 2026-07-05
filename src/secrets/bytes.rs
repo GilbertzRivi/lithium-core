@@ -144,8 +144,14 @@ pub struct SecretBytes(SecretBox<Vec<u8>>);
 
 impl SecretBytes {
     #[inline]
-    pub fn new(v: Vec<u8>) -> Self {
-        Self(SecretBox::new(Box::new(v)))
+    pub fn new(mut v: Vec<u8>) -> Self {
+        if v.capacity() == v.len() {
+            Self(SecretBox::new(Box::new(v)))
+        } else {
+            let exact = v.as_slice().to_vec();
+            v.zeroize();
+            Self(SecretBox::new(Box::new(exact)))
+        }
     }
     #[inline]
     pub fn from_slice(v: &[u8]) -> Self {

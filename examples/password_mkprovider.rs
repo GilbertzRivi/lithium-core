@@ -62,14 +62,12 @@ impl MkProvider for PasswordMkProvider {
     fn store_mk(&self, mk: &SecByte32) -> Result<()> {
         let salt = keys::random_32()?;
         let kek = self.derive_kek(salt.expose_as_slice())?;
-        let nonce = keys::random_12()?;
         let ctx = Context::base("lithium")?
             .add("example")?
             .add("password-mk")?;
         let blob = aead::encrypt(
             &SecretBytes::from_slice(mk.expose_as_slice()),
             &kek,
-            &nonce,
             &ctx,
             WRAP_AAD,
         )?;

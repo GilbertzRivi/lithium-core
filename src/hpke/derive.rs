@@ -6,29 +6,27 @@ use ml_kem::{DecapsulationKey1024, Seed as MlKemSeed, kem::KeyExport};
 use x25519_dalek::{PublicKey as XPublicKey, StaticSecret as XStaticSecret};
 
 use crate::{
-    crypto::{context::Context, kdf},
+    crypto::{context::Context, kdf, keys},
     error::{LithiumError, Result},
     hpke::types::{HpkePrivateKey, HpkePublicKey},
     public::{PubByte32, PublicBytes},
     secrets::SecretBytes,
 };
 
-pub fn derive_keypair(ctx: &Context, ikm: &[u8]) -> Result<(HpkePrivateKey, HpkePublicKey)> {
-    let input = SecretBytes::from_slice(ikm);
+pub fn derive_keypair_from_high_entropy_ikm(
+    ctx: &Context,
+    ikm: &SecretBytes,
+) -> Result<(HpkePrivateKey, HpkePublicKey)> {
     let kp = ctx.add("hpke")?.add("derive-keypair")?;
 
-    let x_priv = kdf::derive32_raw(&input, None, kp.add("x25519-priv")?.label().as_slice())?;
+    let x_priv = kdf::derive32_raw(ikm, None, kp.add("x25519-priv")?.label().as_slice())?;
 
     let x_pub = PubByte32::new(
         *XPublicKey::from(&XStaticSecret::from(*x_priv.expose_as_array())).as_bytes(),
     );
 
-    let k_seed_bytes = kdf::derive_bytes_raw(
-        &input,
-        None,
-        kp.add("mlkem1024-seed")?.label().as_slice(),
-        64,
-    )?;
+    let k_seed_bytes =
+        kdf::derive_bytes_raw(ikm, None, kp.add("mlkem1024-seed")?.label().as_slice(), 64)?;
 
     if k_seed_bytes.expose_as_slice().len() != 64 {
         return Err(LithiumError::internal("mlkem_seed_len"));
@@ -48,4 +46,9 @@ pub fn derive_keypair(ctx: &Context, ikm: &[u8]) -> Result<(HpkePrivateKey, Hpke
         HpkePrivateKey { x_priv, k_priv },
         HpkePublicKey { x_pub, k_pub },
     ))
+}
+
+pub fn random_keypair(ctx: &Context) -> Result<(HpkePrivateKey, HpkePublicKey)> {
+    let ikm = keys::random_32()?;
+    derive_keypair_from_high_entropy_ikm(ctx, &SecretBytes::from_slice(ikm.expose_as_slice()))
 }

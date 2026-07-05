@@ -8,6 +8,7 @@ use std::sync::OnceLock;
 use libfuzzer_sys::fuzz_target;
 use lithium_core::crypto::context::Context;
 use lithium_core::hpke::{self, HpkeEnc, HpkePrivateKey};
+use lithium_core::secrets::SecretBytes;
 
 static SK: OnceLock<HpkePrivateKey> = OnceLock::new();
 static CTX: OnceLock<Context<'static>> = OnceLock::new();
@@ -17,7 +18,14 @@ fn ctx() -> &'static Context<'static> {
 }
 
 fn sk() -> &'static HpkePrivateKey {
-    SK.get_or_init(|| hpke::derive_keypair(ctx(), b"fuzz-recipient").unwrap().0)
+    SK.get_or_init(|| {
+        hpke::derive_keypair_from_high_entropy_ikm(
+            ctx(),
+            &SecretBytes::from_slice(b"fuzz-recipient"),
+        )
+        .unwrap()
+        .0
+    })
 }
 
 fuzz_target!(|data: &[u8]| {

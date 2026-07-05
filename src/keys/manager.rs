@@ -393,8 +393,8 @@ fn ensure_asymmetric_material(
     arena: &SecretArena,
     public_cache_policy: PublicCachePolicy,
 ) -> Result<PublicKeys> {
-    fs::create_dir_all(pub_dir).map_err(LithiumError::io)?;
-    fs::create_dir_all(priv_dir).map_err(LithiumError::io)?;
+    keyfile::ensure_private_dir(pub_dir)?;
+    keyfile::ensure_private_dir(priv_dir)?;
 
     let ed25519 = ensure_seed_keypair::<32, PubByte32>(
         arena,
@@ -648,7 +648,7 @@ impl<P: MkProvider> Shared<P> {
         )?;
 
         cleanup_rotation_dir(&self.rotate_dir)?;
-        fs::create_dir_all(&self.rotate_dir).map_err(LithiumError::io)?;
+        keyfile::ensure_private_dir(&self.rotate_dir)?;
         sync_dir(&self.rotate_dir)?;
 
         let old_mk = self.mk_provider.load_mk()?;
@@ -793,10 +793,10 @@ impl<P: MkProvider + Send + Sync + 'static> KeyManager<P> {
         let secrets_dir = root_dir.join(SECRETS_DIR);
         let rotate_dir = root_dir.join(ROTATE_DIR);
 
-        fs::create_dir_all(&root_dir).map_err(LithiumError::io)?;
-        fs::create_dir_all(&pub_dir).map_err(LithiumError::io)?;
-        fs::create_dir_all(&priv_dir).map_err(LithiumError::io)?;
-        fs::create_dir_all(&secrets_dir).map_err(LithiumError::io)?;
+        keyfile::ensure_private_dir(&root_dir)?;
+        keyfile::ensure_private_dir(&pub_dir)?;
+        keyfile::ensure_private_dir(&priv_dir)?;
+        keyfile::ensure_private_dir(&secrets_dir)?;
 
         let lock_file = acquire_exclusive_lock(&root_dir)?;
 
@@ -935,11 +935,10 @@ impl<P: MkProvider + Send + Sync + 'static> KeyManager<P> {
         aad: &[u8],
     ) -> Result<PublicBytes> {
         let dek = self.get_or_create_secret32(label)?;
-        let nonce = keys::random_12()?;
         let ctx = Context::base("lithium")?
             .add("keymanager")?
             .add("label-aead")?;
-        aead::encrypt(plaintext, &dek, &nonce, &ctx, aad)
+        aead::encrypt(plaintext, &dek, &ctx, aad)
     }
 
     pub fn decrypt_with_label(

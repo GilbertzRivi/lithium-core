@@ -19,7 +19,11 @@ fn ctx() -> &'static Context<'static> {
 
 fn sk() -> &'static (SecByte32, SecretBytes) {
     SK.get_or_init(|| {
-        let (sk, _) = hpke::derive_keypair(ctx(), b"fuzz-recipient").unwrap();
+        let (sk, _) = hpke::derive_keypair_from_high_entropy_ikm(
+            ctx(),
+            &SecretBytes::from_slice(b"fuzz-recipient"),
+        )
+        .unwrap();
         let w = sk.to_wire();
         let w = w.expose_as_slice();
         (

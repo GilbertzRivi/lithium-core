@@ -19,10 +19,70 @@ const KEYFILE_VERSION: u8 = 1;
 const ALG_ID_AES256_GCM_SIV: u8 = 1;
 const DEK_LEN: u16 = 32;
 const KEYFILE_KEK_INFO: &[u8] = b"kek/v1";
+const MAX_KEYFILE_SIZE: u64 = 64 * 1024;
+const CT_WRAP_LEN: usize = 48;
 
 #[inline]
 pub fn read_keyfile_bytes(path: &Path) -> Result<SecretBytes> {
+    let meta = fs::symlink_metadata(path).map_err(LithiumError::io)?;
+    check_keyfile_metadata(&meta)?;
     Ok(SecretBytes::new(fs::read(path).map_err(LithiumError::io)?))
+}
+
+fn check_keyfile_metadata(meta: &fs::Metadata) -> Result<()> {
+    if meta.file_type().is_symlink() {
+        return Err(LithiumError::invalid_perms("keyfile_is_symlink"));
+    }
+    if !meta.is_file() {
+        return Err(LithiumError::invalid_perms("keyfile_not_regular_file"));
+    }
+    if meta.len() > MAX_KEYFILE_SIZE {
+        return Err(LithiumError::invalid_len(
+            MAX_KEYFILE_SIZE as usize,
+            meta.len() as usize,
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if meta.permissions().mode() & 0o077 != 0 {
+            return Err(LithiumError::invalid_perms(
+                "keyfile_group_or_world_accessible",
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub fn ensure_private_dir(path: &Path) -> Result<()> {
+    match fs::symlink_metadata(path) {
+        Ok(meta) => {
+            if !meta.is_dir() {
+                return Err(LithiumError::invalid_perms("keystore_dir_not_directory"));
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if meta.permissions().mode() & 0o077 != 0 {
+                    return Err(LithiumError::invalid_perms(
+                        "keystore_dir_group_or_world_accessible",
+                    ));
+                }
+            }
+            Ok(())
+        }
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            let mut b = fs::DirBuilder::new();
+            b.recursive(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::DirBuilderExt;
+                b.mode(0o700);
+            }
+            b.create(path).map_err(LithiumError::io)
+        }
+        Err(e) => Err(LithiumError::io(e)),
+    }
 }
 
 static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -253,6 +313,9 @@ fn parse_keyfile(
     nonce_wrap.copy_from_slice(take(buf, &mut idx, 12)?);
 
     let len_ct_wrap = read_u16(buf, &mut idx)? as usize;
+    if len_ct_wrap != CT_WRAP_LEN {
+        return Err(LithiumError::malformed_keyfile());
+    }
     let ct_wrap = take(buf, &mut idx, len_ct_wrap)?.to_vec();
 
     let len_nonce_payload = read_u16(buf, &mut idx)? as usize;
@@ -531,6 +594,55 @@ mod tests {
                 extra.len()
             );
         }
+    }
+
+    #[test]
+    fn wrong_ct_wrap_len_is_rejected() {
+        let rec = build_record(
+            KEYFILE_VERSION,
+            ALG_ID_AES256_GCM_SIV,
+            DEK_LEN,
+            &[0x33u8; 32],
+            &[0x44u8; 12],
+            &[0x55u8; 47],
+            &[0x66u8; 12],
+            &[0x77u8; 40],
+        );
+        assert!(parse_keyfile(&SecretBytes::new(rec)).is_err());
+    }
+
+    #[test]
+    fn oversize_keyfile_is_rejected() {
+        let dir = std::env::temp_dir().join(format!("lithium-oversize-{}", std::process::id()));
+        let path = dir.join("big.keyf");
+        write_secure(&path, &vec![0u8; (MAX_KEYFILE_SIZE + 1) as usize]).unwrap();
+        assert!(read_keyfile_bytes(&path).is_err());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn group_or_world_readable_keyfile_is_rejected() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("lithium-perms-{}", std::process::id()));
+        let path = dir.join("secret.keyf");
+        write_secure(&path, b"payload").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(read_keyfile_bytes(&path).is_err());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_keyfile_is_rejected() {
+        let dir = std::env::temp_dir().join(format!("lithium-symlink-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("real.keyf");
+        write_secure(&target, b"payload").unwrap();
+        let link = dir.join("link.keyf");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        assert!(read_keyfile_bytes(&link).is_err());
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[cfg(unix)]
