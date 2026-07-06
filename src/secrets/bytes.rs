@@ -174,8 +174,12 @@ impl SecretBytes {
         self.0.expose_secret_mut()
     }
     #[inline]
-    pub fn expose_into_vec(self) -> Zeroizing<Vec<u8>> {
-        Zeroizing::new(self.0.expose_secret().clone())
+    pub fn expose_into_vec(mut self) -> Zeroizing<Vec<u8>> {
+        Zeroizing::new(core::mem::take(self.0.expose_secret_mut()))
+    }
+    #[inline]
+    pub fn into_vec(mut self) -> Vec<u8> {
+        core::mem::take(self.0.expose_secret_mut())
     }
     #[inline]
     pub fn expose_into_array<const N: usize>(&self) -> Result<Zeroizing<[u8; N]>> {
