@@ -42,6 +42,7 @@ impl SecretJson {
                 return Err(e.into());
             }
         };
+        s.zeroize();
         Ok(Self { value: v })
     }
     #[inline]

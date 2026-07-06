@@ -231,18 +231,20 @@ impl AsRef<[u8]> for SecretBytes {
 }
 
 pub struct ZeroizingWriter {
-    buf: Vec<u8>,
+    buf: Zeroizing<Vec<u8>>,
 }
 
 impl ZeroizingWriter {
     #[inline]
     pub fn new() -> Self {
-        Self { buf: Vec::new() }
+        Self {
+            buf: Zeroizing::new(Vec::new()),
+        }
     }
 
     #[inline]
     pub fn into_secret(self) -> SecretBytes {
-        SecretBytes::new(self.buf)
+        SecretBytes::from_slice(&self.buf)
     }
 }
 
@@ -254,17 +256,21 @@ impl Default for ZeroizingWriter {
 
 impl io::Write for ZeroizingWriter {
     fn write(&mut self, data: &[u8]) -> io::Result<usize> {
-        // Manual grow so the outgrown buffer is zeroized before it is freed; a
-        // plain Vec realloc would leave secret fragments in freed heap.
-        if self.buf.len() + data.len() > self.buf.capacity() {
-            let new_cap = (self.buf.capacity() * 2)
-                .max(self.buf.len() + data.len())
-                .max(64);
+        let needed = self
+            .buf
+            .len()
+            .checked_add(data.len())
+            .ok_or_else(|| io::Error::other("zeroizing writer length overflow"))?;
+
+        if needed > self.buf.capacity() {
+            let new_cap = self.buf.capacity().saturating_mul(2).max(needed).max(64);
+
             let mut next = Vec::with_capacity(new_cap);
             next.extend_from_slice(&self.buf);
             self.buf.zeroize();
-            self.buf = next;
+            *self.buf = next;
         }
+
         self.buf.extend_from_slice(data);
         Ok(data.len())
     }

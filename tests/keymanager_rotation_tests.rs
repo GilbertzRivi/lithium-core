@@ -301,6 +301,43 @@ fn zero_rotate_interval_is_rejected() {
 }
 
 #[test]
+fn oversized_rotate_interval_is_rejected_without_corrupting_state() {
+    let dir = tmp_dir("oversized-interval");
+    std::fs::remove_dir_all(&dir).ok();
+
+    let mk_path = dir.join("mk");
+    let km = KeyManager::start(
+        &dir,
+        FlakyMk {
+            path: mk_path.clone(),
+            fail: Arc::new(AtomicBool::new(false)),
+        },
+        PublicCachePolicy::RepairMissingOnly,
+        RotationErrorPolicy::Callback(Box::new(|_| {})),
+    )
+    .unwrap();
+
+    let err = km.set_rotate_interval(Duration::MAX).unwrap_err();
+    assert_eq!(
+        err.kind,
+        ErrorKind::TtlTooLarge,
+        "an interval that overflows the clock must be rejected, not panic the worker"
+    );
+
+    let mk_before = std::fs::read(&mk_path).unwrap();
+    km.set_rotate_interval(Duration::from_millis(40)).unwrap();
+    assert!(
+        wait_until(|| std::fs::read(&mk_path)
+            .map(|b| b != mk_before)
+            .unwrap_or(false)),
+        "the rotation worker must stay healthy after a rejected oversized interval"
+    );
+
+    drop(km);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
 fn secret_label_length_is_bounded() {
     let dir = tmp_dir("label-limit");
     std::fs::remove_dir_all(&dir).ok();

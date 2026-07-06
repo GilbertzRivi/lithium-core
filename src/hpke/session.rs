@@ -85,6 +85,7 @@ impl HpkeReceiverContext {
             return Err(LithiumError::internal("hpke_session_poisoned"));
         }
         if self.seq == u64::MAX {
+            self.poisoned = true;
             return Err(LithiumError::internal("hpke_seq_overflow"));
         }
         let nonce = seq_nonce(&self.ctx.base_nonce, self.seq)?;

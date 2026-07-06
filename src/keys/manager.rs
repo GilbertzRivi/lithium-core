@@ -731,7 +731,10 @@ fn rotate_loop<P: MkProvider>(shared: &Arc<Shared<P>>) {
             if ctl.stop {
                 return;
             }
-            ctl.next_rotation_at = Instant::now() + every;
+            match Instant::now().checked_add(every) {
+                Some(next) => ctl.next_rotation_at = next,
+                None => return,
+            }
             continue;
         }
         let wait = ctl.next_rotation_at.saturating_duration_since(now);
@@ -826,6 +829,9 @@ impl<P: MkProvider + Send + Sync + 'static> KeyManager<P> {
         let public_keys =
             ensure_asymmetric_material(&pub_dir, &priv_dir, &root_mk, &arena, public_cache_policy)?;
 
+        let next_rotation_at = Instant::now()
+            .checked_add(rotate_every)
+            .ok_or_else(LithiumError::ttl_too_large)?;
         let shared = Arc::new(Shared {
             root_dir,
             pub_dir,
@@ -841,7 +847,7 @@ impl<P: MkProvider + Send + Sync + 'static> KeyManager<P> {
             ctl: Mutex::new(WorkerCtl {
                 stop: false,
                 rotate_every,
-                next_rotation_at: Instant::now() + rotate_every,
+                next_rotation_at,
             }),
             signal: Condvar::new(),
             _lock_file: lock_file,
@@ -893,10 +899,13 @@ impl<P: MkProvider + Send + Sync + 'static> KeyManager<P> {
         if interval < KeyManagerConfig::MIN_ROTATE_EVERY {
             return Err(LithiumError::malformed_input("rotate_every_too_small"));
         }
+        let next_rotation_at = Instant::now()
+            .checked_add(interval)
+            .ok_or_else(LithiumError::ttl_too_large)?;
         {
             let mut ctl = self.shared.ctl.lock().unwrap_or_else(|e| e.into_inner());
             ctl.rotate_every = interval;
-            ctl.next_rotation_at = Instant::now() + interval;
+            ctl.next_rotation_at = next_rotation_at;
         }
         self.shared.signal.notify_all();
         Ok(())
