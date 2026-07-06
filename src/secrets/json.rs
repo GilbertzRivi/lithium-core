@@ -12,7 +12,6 @@ use crate::secrets::string::SecretString;
 
 pub struct SecretJson {
     value: Value,
-    raw: Option<SecretString>,
 }
 
 #[inline]
@@ -32,10 +31,7 @@ impl SecretJson {
     #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Result<Self> {
         let v: Value = serde_json::from_str(s)?;
-        Ok(Self {
-            value: v,
-            raw: Some(SecretString::new(s.to_owned())),
-        })
+        Ok(Self { value: v })
     }
     #[inline]
     pub fn from_string(mut s: String) -> Result<Self> {
@@ -46,10 +42,7 @@ impl SecretJson {
                 return Err(e.into());
             }
         };
-        Ok(Self {
-            value: v,
-            raw: Some(SecretString::new(s)),
-        })
+        Ok(Self { value: v })
     }
     #[inline]
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
@@ -75,10 +68,7 @@ impl SecretJson {
     #[inline]
     pub fn from_zeroizing_vec_no_raw(bytes: Zeroizing<Vec<u8>>) -> Result<Self> {
         let v: Value = serde_json::from_slice(bytes.as_slice())?;
-        Ok(Self {
-            value: v,
-            raw: None,
-        })
+        Ok(Self { value: v })
     }
 
     fn zeroize_value(v: &mut Value) {
@@ -260,19 +250,11 @@ impl SecretJson {
             _ => Err(LithiumError::json_missing_field(key)),
         }
     }
-    #[inline]
-    pub fn take_raw_json(&mut self) -> Option<SecretString> {
-        self.raw.take()
-    }
-    #[inline]
-    pub fn get_raw_json(&self) -> Option<SecretString> {
-        self.raw.as_ref().cloned()
-    }
 }
 
 impl From<Value> for SecretJson {
     fn from(value: Value) -> Self {
-        SecretJson { value, raw: None }
+        SecretJson { value }
     }
 }
 impl Drop for SecretJson {

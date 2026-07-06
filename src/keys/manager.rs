@@ -545,7 +545,7 @@ fn prepare_staged_files(
     targets: &[RewrapTarget],
 ) -> Result<()> {
     let staged_root = rotate_dir.join(ROTATE_STAGE_DIR);
-    fs::create_dir_all(&staged_root).map_err(LithiumError::io)?;
+    keyfile::ensure_private_dir(&staged_root)?;
 
     for target in targets {
         let out = keyfile::rewrap_keyfile_dek_to_bytes(
@@ -556,7 +556,7 @@ fn prepare_staged_files(
         )?;
         let staged_path = stage_target_path(rotate_dir, &target.relative_path);
         if let Some(parent) = staged_path.parent() {
-            fs::create_dir_all(parent).map_err(LithiumError::io)?;
+            keyfile::ensure_private_dir(parent)?;
         }
         keyfile::write_secure(&staged_path, out.expose_as_slice())?;
         if let Some(parent) = staged_path.parent() {

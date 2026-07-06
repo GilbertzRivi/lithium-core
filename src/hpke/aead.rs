@@ -6,10 +6,10 @@ use crate::{
     secrets::SecretBytes,
 };
 
-pub fn seal(ctx: &HpkeContext, aad: &[u8], plaintext: &SecretBytes) -> Result<PublicBytes> {
+pub(crate) fn seal(ctx: &HpkeContext, aad: &[u8], plaintext: &SecretBytes) -> Result<PublicBytes> {
     aead::encrypt_raw(plaintext, &ctx.key, &ctx.base_nonce, aad)
 }
 
-pub fn open(ctx: &HpkeContext, aad: &[u8], ciphertext: &PublicBytes) -> Result<SecretBytes> {
+pub(crate) fn open(ctx: &HpkeContext, aad: &[u8], ciphertext: &PublicBytes) -> Result<SecretBytes> {
     aead::decrypt_raw(ciphertext, &ctx.key, &ctx.base_nonce, aad)
 }

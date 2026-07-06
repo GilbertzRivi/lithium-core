@@ -312,7 +312,9 @@ impl SecretArena {
     ) -> Result<ArenaFixedBytes<N>> {
         let s = src.as_mut();
         if s.len() != N {
-            return Err(LithiumError::invalid_len(N, s.len()));
+            let got = s.len();
+            s.zeroize();
+            return Err(LithiumError::invalid_len(N, got));
         }
         let mut region = self.claim(N)?;
         region.as_mut_slice().copy_from_slice(s);

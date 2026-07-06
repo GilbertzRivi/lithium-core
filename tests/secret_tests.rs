@@ -603,22 +603,6 @@ fn secret_json_display_redacted() {
 }
 
 #[test]
-fn secret_json_raw_json_preserved() {
-    let raw = r#"{"key":"val"}"#;
-    let j = SecretJson::from_str(raw).unwrap();
-    let gotten = j.get_raw_json().unwrap();
-    assert_eq!(gotten.expose(), raw);
-}
-
-#[test]
-fn secret_json_take_raw_json_removes_it() {
-    let mut j = SecretJson::from_str(r#"{"k":"v"}"#).unwrap();
-    let raw = j.take_raw_json().unwrap();
-    assert!(j.take_raw_json().is_none());
-    assert_eq!(raw.expose(), r#"{"k":"v"}"#);
-}
-
-#[test]
 fn secret_json_from_bytes_valid() {
     let j = SecretJson::from_bytes(b"{\"a\":1}").unwrap();
     use secrecy::ExposeSecret;

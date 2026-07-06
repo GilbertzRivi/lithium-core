@@ -150,8 +150,10 @@ fn create_private_tmp(path: &Path) -> Result<(fs::File, PathBuf)> {
 /// default) or protect the master key with a sealing `MkProvider`; the
 /// built-in plaintext provider is dev-only regardless.
 pub fn write_secure(path: &Path, data: &[u8]) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(LithiumError::io)?;
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        ensure_private_dir(parent)?;
     }
 
     let (mut f, tmp) = create_private_tmp(path)?;
@@ -179,8 +181,10 @@ pub fn write_secure(path: &Path, data: &[u8]) -> Result<()> {
 }
 
 pub fn write_secure_new(path: &Path, data: &[u8]) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(LithiumError::io)?;
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        ensure_private_dir(parent)?;
     }
 
     let (mut f, tmp) = create_private_tmp(path)?;
@@ -657,7 +661,6 @@ mod tests {
     #[test]
     fn symlinked_keyfile_is_rejected() {
         let dir = std::env::temp_dir().join(format!("lithium-symlink-{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
         let target = dir.join("real.keyf");
         write_secure(&target, b"payload").unwrap();
         let link = dir.join("link.keyf");

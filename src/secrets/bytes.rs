@@ -38,7 +38,9 @@ impl<const N: usize> SecretFixedBytes<N> {
     pub fn from_wiped<T: AsMut<[u8]>>(mut src: T) -> Result<Self> {
         let s = src.as_mut();
         if s.len() != N {
-            return Err(LithiumError::invalid_len(N, s.len()));
+            let got = s.len();
+            s.zeroize();
+            return Err(LithiumError::invalid_len(N, got));
         }
         let mut out = Self::new_zeroed();
         out.expose_as_mut_slice().copy_from_slice(s);

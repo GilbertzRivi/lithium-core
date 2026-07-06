@@ -66,6 +66,9 @@ pub fn setup_receiver(
 
 impl HpkeSenderContext {
     pub fn seal(&mut self, aad: &[u8], plaintext: &SecretBytes) -> Result<PublicBytes> {
+        if self.seq == u64::MAX {
+            return Err(LithiumError::internal("hpke_seq_overflow"));
+        }
         let nonce = seq_nonce(&self.ctx.base_nonce, self.seq)?;
         let ct = aead::encrypt_raw(plaintext, &self.ctx.key, &nonce, aad)?;
         self.seq = self
@@ -80,6 +83,9 @@ impl HpkeReceiverContext {
     pub fn open(&mut self, aad: &[u8], ciphertext: &PublicBytes) -> Result<SecretBytes> {
         if self.poisoned {
             return Err(LithiumError::internal("hpke_session_poisoned"));
+        }
+        if self.seq == u64::MAX {
+            return Err(LithiumError::internal("hpke_seq_overflow"));
         }
         let nonce = seq_nonce(&self.ctx.base_nonce, self.seq)?;
         let pt = match aead::decrypt_raw(ciphertext, &self.ctx.key, &nonce, aad) {
