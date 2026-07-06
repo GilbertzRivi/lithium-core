@@ -126,6 +126,43 @@ impl DoubleSig {
     }
 }
 
+const ED25519_PUB_LEN: usize = 32;
+const MLDSA87_PUB_LEN: usize = 2592;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DualVerifyingKey {
+    ed25519: PubByte32,
+    mldsa87: PublicBytes,
+}
+
+impl DualVerifyingKey {
+    pub(crate) fn new(ed25519: PubByte32, mldsa87: PublicBytes) -> Self {
+        Self { ed25519, mldsa87 }
+    }
+
+    pub fn to_wire(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(ED25519_PUB_LEN + self.mldsa87.len());
+        out.extend_from_slice(self.ed25519.as_slice());
+        out.extend_from_slice(self.mldsa87.as_slice());
+        out
+    }
+
+    pub fn from_wire(bytes: &[u8]) -> Result<Self> {
+        let expected = ED25519_PUB_LEN + MLDSA87_PUB_LEN;
+        if bytes.len() != expected {
+            return Err(LithiumError::invalid_len(expected, bytes.len()));
+        }
+        Ok(Self {
+            ed25519: PubByte32::from_slice(&bytes[..ED25519_PUB_LEN])?,
+            mldsa87: PublicBytes::from_slice(&bytes[ED25519_PUB_LEN..]),
+        })
+    }
+
+    pub fn verify(&self, message: &[u8], sig: &DoubleSig, ctx: &Context) -> bool {
+        verify_double(message, sig, &self.ed25519, &self.mldsa87, ctx)
+    }
+}
+
 pub fn sign_double<E: AsRef<[u8]>, D: AsRef<[u8]>>(
     message: &[u8],
     ed_seed: E,

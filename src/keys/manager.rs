@@ -9,6 +9,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use crate::crypto::context::Context;
+use crate::crypto::sign::DualVerifyingKey;
 use crate::crypto::{aead, keys};
 use crate::error::{LithiumError, Result};
 use crate::public::{PubByte32, PublicBytes};
@@ -889,6 +890,11 @@ impl<P: MkProvider + Send + Sync + 'static> KeyManager<P> {
             .read()
             .unwrap_or_else(|e| e.into_inner())
             .clone()
+    }
+
+    pub fn dual_verifying_key(&self) -> DualVerifyingKey {
+        let pk = self.public_keys();
+        DualVerifyingKey::new(pk.ed25519, pk.dilithium)
     }
 
     pub fn memory_locked(&self) -> bool {
