@@ -109,6 +109,29 @@ pub fn decrypt(
     )
 }
 
+#[cfg(feature = "raw-aead")]
+pub mod raw {
+    use super::*;
+
+    pub fn encrypt(
+        plaintext: &SecretBytes,
+        key: &SecByte32,
+        nonce: &SecByte12,
+        aad: &[u8],
+    ) -> Result<PublicBytes> {
+        encrypt_raw(plaintext, key, nonce, aad)
+    }
+
+    pub fn decrypt(
+        ciphertext: &PublicBytes,
+        key: &SecByte32,
+        nonce: &SecByte12,
+        aad: &[u8],
+    ) -> Result<SecretBytes> {
+        decrypt_raw(ciphertext, key, nonce, aad)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

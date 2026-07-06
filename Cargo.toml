@@ -12,6 +12,8 @@ default-members = ["."]
 fuzzing = []
 # Cleartext-on-disk master-key provider. Off by default. Turn on for tests/examples.
 insecure-plaintext-mk = []
+# Explicit-nonce, unframed low-level primitives. Off by default; opt in only if you manage nonces and framing yourself.
+raw-aead = []
 
 [dependencies]
 ed25519-dalek = { version = "3.0.0", features = ["zeroize"] }
