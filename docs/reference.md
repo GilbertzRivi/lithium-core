@@ -207,10 +207,12 @@ key, with `"{ctx}/data/v1"` as the AAD. See `caller_aad` below.
 `KyberBoxSealed` output format:
 
 ```rust
-pub struct KyberBoxSealed {
-    pub ciphertext: PublicBytes,
-    pub kem_ct: PublicBytes,   // ML-KEM ciphertext
-}
+pub struct KyberBoxSealed { /* sender_x_pub, kem_ct, ciphertext - all pub(crate) */ }
+
+KyberBoxSealed::sender_x_pub() -> &PubByte32     // sender's ephemeral X25519 public key (ct_T)
+KyberBoxSealed::kem_ct() -> &PublicBytes         // ML-KEM ciphertext
+KyberBoxSealed::ciphertext() -> &PublicBytes     // AEAD-sealed payload
+KyberBoxSealed::{to_wire, from_wire}             // sender_x_pub || kem_ct || ciphertext
 ```
 
 Internal format of `kem_ct`:
@@ -317,7 +319,7 @@ Wire types (public material is public-typed; ciphertext is
 pub struct HpkePublicKey  { /* x25519 pub + ML-KEM pub */ }   // to_wire/from_wire: 32 + 1568 bytes
 pub struct HpkePrivateKey { /* x25519 priv + ML-KEM seed */ } // to_wire -> SecretBytes: 32 + 64 bytes
 pub struct HpkeEnc        { /* ephemeral x25519 pub + kem_ct */ }
-pub struct HpkeSealed     { pub enc: HpkeEnc, pub ciphertext: PublicBytes }
+pub struct HpkeSealed     { /* enc, ciphertext - both pub(crate) */ } // enc()/ciphertext() accessors
 ```
 
 `HpkeEnc`, `HpkePublicKey` and `HpkeSealed` expose `to_wire()` /
@@ -338,25 +340,28 @@ rotation, and recovers an interrupted rotation.
 **On-disk directory layout:**
 
 ```
-{base_dir}/KeyManager/
-  pub/
-    ed25519.pub
-    x25519.pub
-    kyber-mlkem1024.pub
-    dilithium-mldsa87.pub
-  priv/
-    ed25519.keyf            (encrypted keyfile)
-    x25519.keyf
-    kyber-mlkem1024.keyf
-    dilithium-mldsa87.keyf
-  secrets/
-    {hex_label}.keyf        (arbitrary derived secrets)
-  .rotate/                  (temporary MK rotation dir)
-    next-mk-old.keyf
-    next-mk-new.keyf
-    staged/                 (files before commit)
-    ready                   (readiness marker)
-  mk                        (Master Key, InsecurePlaintextMkProvider)
+{base_dir}/
+  KeyManager/
+    .lock                     (exclusive advisory lock, held for the manager's lifetime)
+    pub/
+      ed25519.pub
+      x25519.pub
+      kyber-mlkem1024.pub
+      dilithium-mldsa87.pub
+    priv/
+      ed25519.keyf            (encrypted keyfile)
+      x25519.keyf
+      kyber-mlkem1024.keyf
+      dilithium-mldsa87.keyf
+    secrets/
+      {hex_label}.keyf        (arbitrary derived secrets)
+    .rotate/                  (temporary MK rotation dir)
+      next-mk-old.keyf
+      next-mk-new.keyf
+      staged/                 (files before commit)
+      ready                   (readiness marker)
+  mk                          (Master Key file written by InsecurePlaintextMkProvider,
+                               a sibling of KeyManager/ at base_dir; production providers store it elsewhere)
 ```
 
 **Master Key rotation:**

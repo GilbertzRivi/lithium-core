@@ -55,8 +55,10 @@ separation are implemented faithfully.
 - Known-answer vectors (KAT): `tests/golden_tests.rs` (6 tests) on 
   data in `tests/testdata/` (`kyberbox_golden_v1`, 
   `mldsa87_verify_golden_v1`, `hpke_golden_v1`).
-- Public API tests: `crypto_tests` (87), `hpke_tests` (37), 
-  `secret_tests` (66), `password_tests` (21), `store_tests` (14).
+- Public API tests: `crypto_tests` (85), `hpke_tests` (46), 
+  `hpke_stream_tests` (6), `double_sig_tests` (16), `secret_tests` (75), 
+  `password_tests` (7), `opaque_tests` (13), `store_tests` (15), and the 
+  `keymanager_*` suites (16).
 - Fuzzing: 11 `cargo-fuzz` targets on the surfaces that parse 
   untrusted input (`keyfile_parse`, `secret_json`, `opaque_parse`, 
   `kyberbox_decrypt`, `aead_decrypt`, `sign_verify`, `hpke_open`, 

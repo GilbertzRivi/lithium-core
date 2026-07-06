@@ -58,8 +58,8 @@ provider is `InsecurePlaintextMkProvider` (cleartext file, gated behind
 the `insecure-plaintext-mk` feature, dev only); a production caller 
 implements its own sealing provider.
 
-**MkRotator** - the background task that wakes every 30 s and 
-rotates the MK once the interval passes (3600 s by default).
+**MkRotator** - the background thread that rotates the MK once the 
+interval passes (3600 s by default), then waits for the next one.
 
 **ML-DSA-87** (Dilithium) - post-quantum signature scheme; part of 
 the dual signature.
