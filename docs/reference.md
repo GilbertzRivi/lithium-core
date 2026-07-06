@@ -379,7 +379,7 @@ rotates the MK once the interval elapses; the caller drives nothing.
 The default interval is **3600 seconds** (1 hour), adjustable with
 `set_rotate_interval`. Rotation runs under an internal write lock, so
 it is serialized against every operation that reads key material -
-concurrent `with_signing_keys`/`get_or_create_secret32` calls never observe a
+concurrent `with_signing_seeds`/`get_or_create_secret32` calls never observe a
 half-rewrapped store. A rotation failure is routed through the
 `RotationErrorPolicy` given at `start` (see below), never silently
 dropped.
@@ -419,7 +419,7 @@ KeyManager::start_with_config(base_dir, mk_provider, config, rotation_error_poli
 KeyManager::start_plain(base_dir, public_cache_policy, rotation_error_policy) -> Result<KeyManager<InsecurePlaintextMkProvider>>
 
 // Access to private keys (callback pattern, loaded only for the call)
-manager.with_signing_keys(|ed_seed: ArenaByte32, dili_sk: ArenaByte32| { ... }) -> Result<R>
+manager.with_signing_seeds(|ed_seed: ArenaByte32, dili_sk: ArenaByte32| { ... }) -> Result<R>
 manager.with_x25519_and_kyber_sk(|x_seed: ArenaByte32, kyber_sk: ArenaByte64| { ... }) -> Result<R>
 
 // Public keys / memory-locking state
@@ -678,10 +678,15 @@ Scope is genuinely long-lived keys only (master key, seeds,
 ML-KEM/ML-DSA secret keys); ephemeral values 
 (nonces, HPKE shared secrets) are not worth the arena. `KeyManager` 
 wires it in: it born-locks every seed it generates and hands 
-`with_signing_keys` / 
+`with_signing_seeds` / 
 `with_x25519_and_kyber_sk` arena-backed handles. `harden_process()` 
 is opt-in and never called implicitly, since it sets process-global 
-state. The protection ceiling (a root attacker, register/stack 
+state. Call it once from the top-level binary (not a library), as 
+early in `main` as possible and before the first secret is loaded or 
+generated: a `RLIMIT_CORE`/`PR_SET_DUMPABLE` applied after a secret 
+already reached an unlocked page does not retract that exposure. It is 
+worth calling on any process that handles long-lived key material. The 
+protection ceiling (a root attacker, register/stack 
 spills, cold-boot, a low `RLIMIT_MEMLOCK`, and the unavoidable heap 
 transit when AES-GCM-SIV decrypts a key or a PQ seed is expanded for 
 an operation) is detailed in [`threat-model.md`](threat-model.md).
@@ -973,7 +978,7 @@ argument is in [`kyberbox.md`](kyberbox.md). The concrete
 mechanisms behind those guarantees:
 
 - **Private-key confidentiality**: access only through a callback 
-  (`with_signing_keys`, `with_x25519_and_kyber_sk`); `KeyManager` 
+  (`with_signing_seeds`, `with_x25519_and_kyber_sk`); `KeyManager` 
   loads the key for the call and does not retain it afterwards. 
   Confinement past the callback is the caller's responsibility.
 - **Domain separation**: every KDF/AEAD operation runs under a 

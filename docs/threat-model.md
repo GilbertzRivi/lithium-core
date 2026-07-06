@@ -164,13 +164,17 @@ unlocked, swappable page.
   material is generated born-locked: the seed bytes are filled from
   the system CSRNG straight into the arena, then the keypair is
   derived via `from_seed`. Private keys are load-on-demand:
-  `with_signing_keys` / `with_x25519_and_kyber_sk` decrypt into
+  `with_signing_seeds` / `with_x25519_and_kyber_sk` decrypt into
   arena-backed handles for the call and drop them after.
 - **`secrets::harden_process()`** is opt-in - the embedder calls it;
   the library never sets process-global state implicitly. On
   Linux/Android it applies `PR_SET_DUMPABLE 0` and on Unix it sets
   `RLIMIT_CORE 0`. On Windows it sets process error mode flags and
-  asks WER for `WER_FAULT_REPORTING_FLAG_NOHEAP`.
+  asks WER for `WER_FAULT_REPORTING_FLAG_NOHEAP`. Any process that
+  handles long-lived key material should call it once at startup,
+  before the first secret exists - it is the process-wide counterpart
+  to the arena and covers the heap copies the arena cannot (the
+  transit when AES-GCM-SIV unwraps a key or a PQ seed is expanded).
 - The crate is `#![deny(unsafe_code)]`; all `unsafe` used for arena
   OS calls is confined to the (`pub(crate)`) arena module behind a
   safe API.
