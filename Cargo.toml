@@ -14,8 +14,8 @@ fuzzing = []
 insecure-plaintext-mk = []
 
 [dependencies]
-ed25519-dalek = { version = "2.2.0", features = ["zeroize"] }
-x25519-dalek = { version = "2.0.1", features = ["static_secrets", "zeroize"] }
+ed25519-dalek = { version = "3.0.0", features = ["zeroize"] }
+x25519-dalek = { version = "3.0.0", features = ["static_secrets", "zeroize"] }
 ml-kem = { version = "0.3.2", features = ["zeroize", "getrandom"] }
 ml-dsa = { version = "0.1.1", features = ["zeroize", "getrandom"] }
 zeroize = { version = "1.8.2", features = ["derive"] }

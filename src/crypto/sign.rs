@@ -16,7 +16,7 @@ use ed25519_dalek::{
 use ml_dsa::{
     KeyInit, MlDsa87, Signature as MlDsaSignature, SigningKey as MlDsaSigningKey,
     VerifyingKey as MlDsaVerifyingKey,
-    signature::{SignatureEncoding, Signer as MlDsaSigner, Verifier as MlDsaVerifier},
+    signature::{SignatureEncoding, Verifier as MlDsaVerifier},
 };
 
 const MLDSA87_SIG_LEN: usize = 4627;
