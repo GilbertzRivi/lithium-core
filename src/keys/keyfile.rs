@@ -22,6 +22,27 @@ const KEYFILE_KEK_INFO: &[u8] = b"kek/v1";
 const MAX_KEYFILE_SIZE: u64 = 64 * 1024;
 const CT_WRAP_LEN: usize = 48;
 
+#[cfg(unix)]
+#[inline]
+pub fn read_keyfile_bytes(path: &Path) -> Result<SecretBytes> {
+    use std::io::Read;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let f = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+        .map_err(LithiumError::io)?;
+    let meta = f.metadata().map_err(LithiumError::io)?;
+    check_keyfile_metadata(&meta)?;
+    let mut buf = Vec::new();
+    f.take(MAX_KEYFILE_SIZE)
+        .read_to_end(&mut buf)
+        .map_err(LithiumError::io)?;
+    Ok(SecretBytes::new(buf))
+}
+
+#[cfg(not(unix))]
 #[inline]
 pub fn read_keyfile_bytes(path: &Path) -> Result<SecretBytes> {
     let meta = fs::symlink_metadata(path).map_err(LithiumError::io)?;

@@ -21,7 +21,7 @@ fn sk() -> &'static HpkePrivateKey {
     SK.get_or_init(|| {
         hpke::derive_keypair_from_high_entropy_ikm(
             ctx(),
-            &SecretBytes::from_slice(b"fuzz-recipient"),
+            &SecretBytes::from_slice(b"fuzz-recipient-high-entropy-ikm-pad"),
         )
         .unwrap()
         .0

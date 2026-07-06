@@ -54,4 +54,4 @@ pub mod secrets;
 /// Helper: in-memory TTL store for ephemeral secrets.
 pub mod utils;
 
-pub use error::{ErrorKind, LithiumError, Result};
+pub use error::{CoarseResult, ErrorKind, LithiumError, Result};

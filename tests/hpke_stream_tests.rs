@@ -25,7 +25,7 @@ fn ctx_of(s: &str) -> Context<'_> {
 fn multi_message_roundtrips_in_order() {
     let (sk, pk) = derive_keypair_from_high_entropy_ikm(
         &ctx_of(CTX),
-        &SecretBytes::from_slice(b"stream-ikm-in-order"),
+        &SecretBytes::from_slice(b"stream-ikm-in-order-high-entropy-padding"),
     )
     .unwrap();
     let (enc, mut sender) = setup_sender(&ctx_of(CTX), &pk, b"info").unwrap();
@@ -53,7 +53,7 @@ fn multi_message_roundtrips_in_order() {
 fn same_plaintext_gives_distinct_ciphertexts_per_sequence() {
     let (_, pk) = derive_keypair_from_high_entropy_ikm(
         &ctx_of(CTX),
-        &SecretBytes::from_slice(b"stream-ikm-distinct"),
+        &SecretBytes::from_slice(b"stream-ikm-distinct-high-entropy-padding"),
     )
     .unwrap();
     let (_enc, mut sender) = setup_sender(&ctx_of(CTX), &pk, b"info").unwrap();
@@ -67,7 +67,7 @@ fn same_plaintext_gives_distinct_ciphertexts_per_sequence() {
 fn out_of_order_open_fails() {
     let (sk, pk) = derive_keypair_from_high_entropy_ikm(
         &ctx_of(CTX),
-        &SecretBytes::from_slice(b"stream-ikm-order"),
+        &SecretBytes::from_slice(b"stream-ikm-order-high-entropy-padding"),
     )
     .unwrap();
     let (enc, mut sender) = setup_sender(&ctx_of(CTX), &pk, b"info").unwrap();
@@ -86,7 +86,7 @@ fn out_of_order_open_fails() {
 fn wrong_aad_fails() {
     let (sk, pk) = derive_keypair_from_high_entropy_ikm(
         &ctx_of(CTX),
-        &SecretBytes::from_slice(b"stream-ikm-aad"),
+        &SecretBytes::from_slice(b"stream-ikm-aad-high-entropy-padding"),
     )
     .unwrap();
     let (enc, mut sender) = setup_sender(&ctx_of(CTX), &pk, b"info").unwrap();
@@ -100,7 +100,7 @@ fn wrong_aad_fails() {
 fn tampered_ciphertext_fails() {
     let (sk, pk) = derive_keypair_from_high_entropy_ikm(
         &ctx_of(CTX),
-        &SecretBytes::from_slice(b"stream-ikm-tamper"),
+        &SecretBytes::from_slice(b"stream-ikm-tamper-high-entropy-padding"),
     )
     .unwrap();
     let (enc, mut sender) = setup_sender(&ctx_of(CTX), &pk, b"info").unwrap();
@@ -118,7 +118,7 @@ fn tampered_ciphertext_fails() {
 fn open_failure_poisons_session() {
     let (sk, pk) = derive_keypair_from_high_entropy_ikm(
         &ctx_of(CTX),
-        &SecretBytes::from_slice(b"stream-ikm-poison"),
+        &SecretBytes::from_slice(b"stream-ikm-poison-high-entropy-padding"),
     )
     .unwrap();
     let (enc, mut sender) = setup_sender(&ctx_of(CTX), &pk, b"info").unwrap();

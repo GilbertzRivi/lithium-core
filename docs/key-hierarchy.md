@@ -110,5 +110,27 @@ What the library's at-rest protection holds against:
 | Disk alone, without the MK or whatever the `MkProvider` uses to guard it            | public keys and encrypted `.keyf` blobs                    | private keys and sealed secrets                  |
 | Disk plus `InsecurePlaintextMkProvider` MK file                                     | all `.keyf` payloads can be decrypted                      | nothing protected by that MK                     |
 | Disk plus a properly sealed MK provider, but without the provider's unlock material | public keys and encrypted `.keyf` blobs                    | private keys and sealed secrets                  |
-| One old MK after a successful rotation                                              | `.keyf` files that were copied before the rotation         | current `.keyf` files rewrapped under the new MK |
+| One old MK, plus a copy of a `.keyf` from before the rotation                       | the DEK and payload of that pre-rotation copy, unchanged   | files for which the attacker has no pre-rotation copy |
 | Breaking ML-KEM **or** X25519 on its own                                            | no message content from the hybrid encryption construction | message content, as both branches are required   |
+
+Rotation rewraps only the DEK's KEK wrapping; the DEK, `ct_payload` and
+`nonce_payload` are copied verbatim (`rewrap_keyfile_dek_to_bytes`). So an
+attacker holding an old MK **and** a copy of a file from before the rotation
+recovers the same DEK and reads the identical `ct_payload` that now lives in
+the current file. Rotation only defends against an attacker who learns an old
+MK but never had the old file. There is no at-rest forward secrecy for the
+payload.
+
+## Rollback
+
+Cross-generation rollback - swapping a current `.keyf` for a copy taken
+before a rotation - is closed structurally. Every DEK is wrapped with a KEK
+derived from the current MK (`derive_kek`), and each rotation mints a fresh
+random MK. An old copy therefore carries a KEK that the current MK cannot
+reproduce, so opening it fails with an AEAD error rather than returning stale
+key material.
+
+In-generation rollback - restoring an earlier value that was sealed under the
+same MK, between two rotations - is outside the core's model. Detecting it
+needs an external monotonic counter (a TPM NV index or equivalent sealed
+hardware); the core deliberately does not embed one.

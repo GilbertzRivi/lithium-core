@@ -22,7 +22,7 @@ fn setup() -> &'static (HpkePrivateKey, HpkeEnc) {
     SETUP.get_or_init(|| {
         let (sk, pk) = hpke::derive_keypair_from_high_entropy_ikm(
             ctx(),
-            &SecretBytes::from_slice(b"fuzz-recipient"),
+            &SecretBytes::from_slice(b"fuzz-recipient-high-entropy-ikm-pad"),
         )
         .unwrap();
         let (enc, _sender) = hpke::setup_sender(ctx(), &pk, b"info").unwrap();

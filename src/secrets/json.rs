@@ -105,7 +105,10 @@ impl SecretJson {
                     k.shrink_to_fit();
                 }
             }
-            Value::Number(_) => *v = Value::Null,
+            Value::Number(_) => {
+                *v = Value::Number(0u64.into());
+                *v = Value::Null;
+            }
             Value::Bool(_) | Value::Null => {}
         }
     }
@@ -290,5 +293,24 @@ impl fmt::Display for SecretJson {
 impl ExposeSecret<Value> for SecretJson {
     fn expose_secret(&self) -> &Value {
         &self.value
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn zeroize_value_nulls_out_numbers() {
+        let mut v = Value::Number(1234u64.into());
+        SecretJson::zeroize_value(&mut v);
+        assert_eq!(v, Value::Null);
+    }
+
+    #[test]
+    fn zeroize_value_reaches_nested_numbers() {
+        let mut v: Value = serde_json::from_str(r#"{"a": 42, "b": [1, 2, {"c": 3}]}"#).unwrap();
+        SecretJson::zeroize_value(&mut v);
+        assert_eq!(v, Value::Object(Map::new()));
     }
 }

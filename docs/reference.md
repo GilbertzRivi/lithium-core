@@ -533,6 +533,11 @@ Windows no DACL is set and the file inherits the parent directory's
 ACL, so keep the store under a per-user profile directory or protect 
 the MK with a sealing `MkProvider`.
 
+Reading enforces the same shape: on Unix the keyfile is opened with
+`O_NOFOLLOW` and validated on the open descriptor, rejecting symlinks
+and any group- or world-accessible mode, and capping the read at
+`MAX_KEYFILE_SIZE`.
+
 Rewrapping (changing the MK without decrypting the payload):
 
 ```
@@ -850,6 +855,11 @@ store.take(key) -> Result<Option<SecretBytes>>   // read and remove
 store.del(key) -> Result<()>
 ```
 
+`EphemeralStoreManager::new()` locks the per-instance key's arena pages
+best-effort; `with_locking(MemoryLocking::Require)` fails closed when
+those pages cannot be locked, reusing the same `keys::MemoryLocking`
+policy as `KeyManager`.
+
 A background `std::thread` proactively sweeps expired entries, 
 waking exactly at the next entry's expiry deadline (re-planned on 
 each insert), so an expired `SecretBytes` is zeroized as soon as it 
@@ -874,6 +884,10 @@ The `Display` message is always honest about the error kind; only the
 (`debug_assertions`). This library is not the oracle boundary - a caller
 crossing a trust boundary (e.g. a network response an attacker can probe)
 must flatten distinguishable errors into coarse categories itself.
+`CoarseResult::coarse_err()` (and `LithiumError::coarse()`) does exactly
+that: it maps any error to a single detail-free `ErrorKind::Opaque`, the
+same result regardless of the input and with no `source`, so the error
+channel carries no distinguishing signal.
 
 Selected `ErrorKind` variants:
 - `AeadFailed`: AEAD authenticity/decryption failure
@@ -898,6 +912,8 @@ Selected `ErrorKind` variants:
 - `Io`: an I/O error
 - `Internal { reason }`: a broken invariant; `reason` is a fixed
   code-authored label, never attacker-derived data
+- `Opaque`: a deliberately detail-free error from `coarse()` at a trust
+  boundary; carries no `source` and always displays as `operation failed`
 
 `From` is implemented for: `std::io::Error`, `hex::FromHexError`, 
 `serde_json::Error`, `hkdf::InvalidLength`, 

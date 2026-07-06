@@ -13,10 +13,15 @@ use crate::{
     secrets::SecretBytes,
 };
 
+const MIN_IKM_LEN: usize = 32;
+
 pub fn derive_keypair_from_high_entropy_ikm(
     ctx: &Context,
     ikm: &SecretBytes,
 ) -> Result<(HpkePrivateKey, HpkePublicKey)> {
+    if ikm.expose_as_slice().len() < MIN_IKM_LEN {
+        return Err(LithiumError::malformed_input("hpke_ikm_too_short"));
+    }
     let kp = ctx.add("hpke")?.add("derive-keypair")?;
 
     let x_priv = kdf::derive32_raw(ikm, None, kp.add("x25519-priv")?.label().as_slice())?;
@@ -51,4 +56,32 @@ pub fn derive_keypair_from_high_entropy_ikm(
 pub fn random_keypair(ctx: &Context) -> Result<(HpkePrivateKey, HpkePublicKey)> {
     let ikm = keys::random_32()?;
     derive_keypair_from_high_entropy_ikm(ctx, &SecretBytes::from_slice(ikm.expose_as_slice()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::ErrorKind;
+
+    fn ctx() -> Context<'static> {
+        Context::base("lithium").unwrap()
+    }
+
+    #[test]
+    fn ikm_below_minimum_is_rejected() {
+        let ikm = SecretBytes::from_slice(&[0u8; MIN_IKM_LEN - 1]);
+        let err = derive_keypair_from_high_entropy_ikm(&ctx(), &ikm).unwrap_err();
+        assert_eq!(
+            err.kind,
+            ErrorKind::MalformedInput {
+                reason: "hpke_ikm_too_short"
+            }
+        );
+    }
+
+    #[test]
+    fn ikm_at_minimum_is_accepted() {
+        let ikm = SecretBytes::from_slice(&[7u8; MIN_IKM_LEN]);
+        assert!(derive_keypair_from_high_entropy_ikm(&ctx(), &ikm).is_ok());
+    }
 }

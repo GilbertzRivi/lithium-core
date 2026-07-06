@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 use crate::crypto::aead;
 use crate::crypto::context::Context;
 use crate::error::{LithiumError, Result};
+use crate::keys::MemoryLocking;
 use crate::public::PublicBytes;
 use crate::secrets::SecByte32;
 use crate::secrets::arena::{ArenaByte32, SecretArena};
@@ -96,7 +97,14 @@ impl Eq for HeapEntry {}
 
 impl EphemeralStoreManager {
     pub fn new() -> Result<Self> {
-        let arena = SecretArena::with_capacity_best_effort(4096)?;
+        Self::with_locking(MemoryLocking::BestEffort)
+    }
+
+    pub fn with_locking(locking: MemoryLocking) -> Result<Self> {
+        let arena = match locking {
+            MemoryLocking::Require => SecretArena::with_capacity(4096)?,
+            MemoryLocking::BestEffort => SecretArena::with_capacity_best_effort(4096)?,
+        };
         let key = arena.random_fixed::<32>()?;
         let shared = Arc::new(Shared {
             inner: Mutex::new(StoreInner::default()),
@@ -345,6 +353,20 @@ mod tests {
             !stored.windows(plaintext.len()).any(|w| w == plaintext),
             "plaintext must not appear in the at-rest ciphertext"
         );
+    }
+
+    #[test]
+    fn with_locking_both_policies_roundtrip() {
+        for policy in [MemoryLocking::Require, MemoryLocking::BestEffort] {
+            let store = EphemeralStoreManager::with_locking(policy).unwrap();
+            store
+                .set("k", sb(b"value"), Duration::from_secs(60))
+                .unwrap();
+            assert_eq!(
+                store.take("k").unwrap().unwrap().expose_as_slice(),
+                b"value"
+            );
+        }
     }
 
     #[test]

@@ -24,7 +24,12 @@ fn ctx_of(s: &str) -> Context<'_> {
 }
 
 fn kp(ctx: &str, ikm: &[u8]) -> (HpkePrivateKey, HpkePublicKey) {
-    hpke::derive_keypair_from_high_entropy_ikm(&ctx_of(ctx), &SecretBytes::from_slice(ikm)).unwrap()
+    let mut seed = ikm.to_vec();
+    if seed.len() < 32 {
+        seed.resize(32, 0);
+    }
+    hpke::derive_keypair_from_high_entropy_ikm(&ctx_of(ctx), &SecretBytes::from_slice(&seed))
+        .unwrap()
 }
 
 fn pub_raw(pk: &HpkePublicKey) -> (PubByte32, PublicBytes) {
@@ -103,10 +108,15 @@ fn derive_keypair_is_deterministic() {
 }
 
 #[test]
-fn derive_keypair_empty_ikm_is_ok_and_deterministic() {
-    let (_, pk1) = kp(CTX, b"");
-    let (_, pk2) = kp(CTX, b"");
-    assert_eq!(pk1.to_wire(), pk2.to_wire());
+fn derive_keypair_short_ikm_is_rejected() {
+    assert!(
+        hpke::derive_keypair_from_high_entropy_ikm(&ctx_of(CTX), &sb(&[0u8; 31])).is_err(),
+        "sub-32-byte ikm must be rejected"
+    );
+    assert!(
+        hpke::derive_keypair_from_high_entropy_ikm(&ctx_of(CTX), &sb(&[0u8; 32])).is_ok(),
+        "32-byte ikm must be accepted"
+    );
 }
 
 #[test]

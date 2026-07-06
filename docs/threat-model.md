@@ -122,6 +122,21 @@ rotating recipient keys). The actual forward-secrecy /
 post-compromise guarantees are the consuming application's session
 layer's responsibility; KyberBox on its own does not provide them.
 
+## Rollback
+
+Cross-generation rollback - swapping a current `.keyf` for a copy
+taken before a rotation - is closed structurally. Every DEK is
+wrapped with a KEK derived from the current MK (`derive_kek`), and
+each rotation mints a fresh random MK, so an old copy carries a KEK
+the current MK cannot reproduce: opening it fails with an AEAD
+error rather than returning stale key material.
+
+In-generation rollback - restoring an earlier value sealed under
+the same MK, between two rotations - is outside the core's model.
+Detecting it needs an external monotonic counter (a TPM NV index or
+equivalent sealed hardware), which the core deliberately does not
+embed.
+
 ## In-memory secret protection
 
 OS-level page hygiene beats per-value zeroize alone: the guiding
@@ -262,3 +277,17 @@ Production callers supply a sealing provider.
   partially mitigated by `secrets::arena` + `harden_process()` on
   the platforms listed above. A root attacker remains out of scope.
   See "In-memory secret protection".
+
+## Dependency status
+
+The post-quantum crates are pre-1.0 and unaudited: `ml-kem` 0.3.2
+and `ml-dsa` 0.1.1. Their APIs and wire formats may still change,
+and their constant-time properties are inherited, not verified
+here. Track their stable releases.
+
+Those two crates also pull a second, newer generation of shared
+RustCrypto dependencies into the tree - `rand` 0.10, `getrandom`
+0.4, `digest` 0.11 and `der` 0.8 - alongside the 0.8 / 0.2 / 0.10 /
+0.7 lines the rest of the crate uses. The duplicates are transitive
+and do not affect correctness; they converge once upstream migrates
+to stable versions.

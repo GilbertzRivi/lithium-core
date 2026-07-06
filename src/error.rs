@@ -149,6 +149,11 @@ impl LithiumError {
     }
 
     #[inline]
+    pub fn coarse(&self) -> LithiumError {
+        LithiumError::new(ErrorKind::Opaque)
+    }
+
+    #[inline]
     pub fn opaque_protocol(reason: &'static str) -> Self {
         Self::new(ErrorKind::OpaqueProtocol { reason })
     }
@@ -325,6 +330,7 @@ pub enum ErrorKind {
     Internal {
         reason: &'static str,
     },
+    Opaque,
 }
 
 impl fmt::Display for ErrorKind {
@@ -375,6 +381,7 @@ impl fmt::Display for ErrorKind {
             ErrorKind::HttpStatus { code } => write!(f, "http status {code}"),
             ErrorKind::OpaqueProtocol { reason } => write!(f, "opaque protocol error: {reason}"),
             ErrorKind::Internal { reason } => write!(f, "internal error: {reason}"),
+            ErrorKind::Opaque => write!(f, "operation failed"),
         }
     }
 }
@@ -423,5 +430,45 @@ impl From<aes_gcm_siv::aead::Error> for LithiumError {
 impl From<rand::rngs::SysError> for LithiumError {
     fn from(err: rand::rngs::SysError) -> Self {
         LithiumError::random_failed().with_source(err)
+    }
+}
+
+pub trait CoarseResult {
+    fn coarse_err(self) -> Self;
+}
+
+impl<T> CoarseResult for Result<T> {
+    #[inline]
+    fn coarse_err(self) -> Self {
+        self.map_err(|e| e.coarse())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn coarse_collapses_distinct_errors_identically() {
+        let errs = [
+            LithiumError::aead_failed(),
+            LithiumError::malformed_keyfile(),
+            LithiumError::io(std::io::Error::other("boom")),
+        ];
+        for e in errs {
+            let c = e.coarse();
+            assert_eq!(c.kind, ErrorKind::Opaque);
+            assert_eq!(c.to_string(), "operation failed");
+            assert!(c.source.is_none());
+        }
+    }
+
+    #[test]
+    fn coarse_err_maps_err_and_passes_ok() {
+        let ok: Result<u8> = Ok(7);
+        assert_eq!(ok.coarse_err().unwrap(), 7);
+
+        let err: Result<u8> = Err(LithiumError::aead_failed());
+        assert_eq!(err.coarse_err().unwrap_err().kind, ErrorKind::Opaque);
     }
 }
