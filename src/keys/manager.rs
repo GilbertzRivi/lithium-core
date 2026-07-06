@@ -9,7 +9,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use crate::crypto::context::Context;
-use crate::crypto::sign::DualVerifyingKey;
+use crate::crypto::sign::{DoubleSig, DualVerifyingKey};
 use crate::crypto::{aead, keys};
 use crate::error::{LithiumError, Result};
 use crate::public::{PubByte32, PublicBytes};
@@ -897,6 +897,17 @@ impl<P: MkProvider + Send + Sync + 'static> KeyManager<P> {
         DualVerifyingKey::new(pk.ed25519, pk.dilithium)
     }
 
+    pub fn sign_double(&self, message: &[u8], ctx: &Context) -> Result<DoubleSig> {
+        self.signing_seeds(|ed_seed, dili_seed| {
+            crate::crypto::sign::sign_double(
+                message,
+                ed_seed.expose_as_slice(),
+                dili_seed.expose_as_slice(),
+                ctx,
+            )
+        })
+    }
+
     pub fn memory_locked(&self) -> bool {
         self.shared.arena.is_locked()
     }
@@ -979,10 +990,7 @@ impl<P: MkProvider + Send + Sync + 'static> KeyManager<P> {
         load_or_create_label_bytes(&self.shared.secrets_dir, &root_mk, label, generate)
     }
 
-    pub fn with_signing_seeds<R>(
-        &self,
-        f: impl FnOnce(ArenaByte32, ArenaByte32) -> Result<R>,
-    ) -> Result<R> {
+    fn signing_seeds<R>(&self, f: impl FnOnce(ArenaByte32, ArenaByte32) -> Result<R>) -> Result<R> {
         let (ed_locked, dili_locked) = {
             let _gate = self.shared.read_gate()?;
             let mk = self.shared.mk_provider.load_mk()?;
@@ -1007,6 +1015,14 @@ impl<P: MkProvider + Send + Sync + 'static> KeyManager<P> {
             (ed_locked, dili_locked)
         };
         f(ed_locked, dili_locked)
+    }
+
+    #[cfg(feature = "raw")]
+    pub fn with_signing_seeds<R>(
+        &self,
+        f: impl FnOnce(ArenaByte32, ArenaByte32) -> Result<R>,
+    ) -> Result<R> {
+        self.signing_seeds(f)
     }
 
     pub fn with_x25519_and_kyber_sk<R>(

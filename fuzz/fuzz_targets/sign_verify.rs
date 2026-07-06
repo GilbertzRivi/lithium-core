@@ -19,6 +19,6 @@ fuzz_target!(|data: &[u8]| {
     };
 
     let ctx = Context::base("fuzz").unwrap();
-    let _ = sign::verify_signature(msg, sig, &ed_pub, &ctx);
-    let _ = sign::verify_signature_dili(msg, sig, &PublicBytes::from_slice(data), &ctx);
+    let _ = sign::raw::verify_signature(msg, sig, &ed_pub, &ctx);
+    let _ = sign::raw::verify_signature_dili(msg, sig, &PublicBytes::from_slice(data), &ctx);
 });

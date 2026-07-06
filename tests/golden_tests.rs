@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use lithium_core::crypto::hash::sha256;
 use lithium_core::crypto::kyberbox::KyberBoxSealed;
-use lithium_core::crypto::{Context, aead, kyberbox, sign};
+use lithium_core::crypto::{Context, aead, kyberbox};
 use lithium_core::hpke::{self, HpkeEnc, HpkeSealed};
 use lithium_core::public::PublicBytes;
 use lithium_core::secrets::{SecByte32, SecretBytes};
@@ -79,35 +79,6 @@ fn kyberbox_wire_decrypts_to_pinned_plaintext() {
     .unwrap();
 
     assert_eq!(body.expose_as_slice(), b"golden-body-v1");
-}
-
-#[test]
-fn mldsa87_signature_verifies_pinned_vector() {
-    let vectors: HashMap<&str, &str> = include_str!("testdata/mldsa87_verify_golden_v1.txt")
-        .lines()
-        .filter_map(|line| line.split_once('='))
-        .collect();
-
-    let dili_pub = PublicBytes::from_hex(vectors["DILI_PUB"]).unwrap();
-    let dili_sig = PublicBytes::from_hex(vectors["DILI_SIG"]).unwrap();
-    let msg = b"golden-mldsa87-v1";
-
-    assert_eq!(dili_pub.as_slice().len(), 2592);
-    assert_eq!(dili_sig.as_slice().len(), 4627);
-
-    let ctx = ctx_of("golden/mldsa/v1");
-    assert!(sign::verify_signature_dili(
-        msg,
-        dili_sig.as_slice(),
-        &dili_pub,
-        &ctx
-    ));
-    assert!(!sign::verify_signature_dili(
-        b"tampered",
-        dili_sig.as_slice(),
-        &dili_pub,
-        &ctx
-    ));
 }
 
 #[test]

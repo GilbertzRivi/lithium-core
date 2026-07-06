@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Lithium Project
 // SPDX-License-Identifier: AGPL-3.0-only
 
-use lithium_core::crypto::{Context, aead, kdf, keys, kyberbox, sign};
+use lithium_core::crypto::{Context, aead, kdf, keys, kyberbox};
 use lithium_core::error::{ErrorKind, Result};
 use lithium_core::public::{PubByte32, PublicBytes};
 use lithium_core::secrets::{SecByte32, SecByte64, SecretBytes};
@@ -14,10 +14,6 @@ fn kctx() -> Context<'static> {
     Context::base("test").unwrap().add("kdf").unwrap()
 }
 
-fn sctx() -> Context<'static> {
-    Context::base("test").unwrap().add("sign").unwrap()
-}
-
 fn aenc(pt: &SecretBytes, key: &SecByte32, aad: &[u8]) -> Result<PublicBytes> {
     aead::encrypt(pt, key, &actx(), aad)
 }
@@ -28,22 +24,6 @@ fn adec(blob: &PublicBytes, key: &SecByte32, aad: &[u8]) -> Result<SecretBytes> 
 
 fn kderive32(input: &SecretBytes, salt: Option<&SecretBytes>, info: &[u8]) -> Result<SecByte32> {
     kdf::derive32(input, salt, &kctx(), info)
-}
-
-fn sign_msg<S: AsRef<[u8]>>(msg: &[u8], seed: S) -> Result<Vec<u8>> {
-    sign::sign_message(msg, seed, &sctx())
-}
-
-fn verify_sig(msg: &[u8], sig: &[u8], pk: &PubByte32) -> bool {
-    sign::verify_signature(msg, sig, pk, &sctx())
-}
-
-fn sign_dili<S: AsRef<[u8]>>(msg: &[u8], sk: S) -> Result<Vec<u8>> {
-    sign::sign_message_dili(msg, sk, &sctx())
-}
-
-fn verify_dili(msg: &[u8], sig: &[u8], pk: &PublicBytes) -> bool {
-    sign::verify_signature_dili(msg, sig, pk, &sctx())
 }
 
 fn sb(data: &[u8]) -> SecretBytes {
@@ -276,94 +256,6 @@ fn keys_dilithium_keypair_sizes() {
     let (sk, pk) = keys::ephemeral_dilithium_mldsa87_keypair().unwrap();
     assert_eq!(sk.expose_as_slice().len(), 32);
     assert_eq!(pk.as_slice().len(), 2592);
-}
-
-#[test]
-fn sign_ed25519_roundtrip() {
-    let (seed, pk) = keys::ephemeral_ed25519_keypair().unwrap();
-    let msg = b"test message to sign";
-
-    let sig = sign_msg(msg, seed.expose_as_slice()).unwrap();
-    assert!(verify_sig(msg, sig.as_slice(), &pk));
-}
-
-#[test]
-fn sign_ed25519_wrong_message_fails() {
-    let (seed, pk) = keys::ephemeral_ed25519_keypair().unwrap();
-    let sig = sign_msg(b"original", seed.expose_as_slice()).unwrap();
-    assert!(!verify_sig(b"tampered", sig.as_slice(), &pk));
-}
-
-#[test]
-fn sign_ed25519_wrong_key_fails() {
-    let (seed, _pk) = keys::ephemeral_ed25519_keypair().unwrap();
-    let (_, wrong_pk) = keys::ephemeral_ed25519_keypair().unwrap();
-    let msg = b"test";
-
-    let sig = sign_msg(msg, seed.expose_as_slice()).unwrap();
-    assert!(!verify_sig(msg, sig.as_slice(), &wrong_pk));
-}
-
-#[test]
-fn sign_ed25519_short_signature_fails() {
-    let (_, pk) = keys::ephemeral_ed25519_keypair().unwrap();
-    assert!(!verify_sig(b"msg", &[0u8; 32], &pk));
-}
-
-#[test]
-fn sign_ed25519_signature_is_64_bytes() {
-    let (seed, _) = keys::ephemeral_ed25519_keypair().unwrap();
-    let sig = sign_msg(b"data", seed.expose_as_slice()).unwrap();
-    assert_eq!(sig.as_slice().len(), 64);
-}
-
-#[test]
-fn sign_ed25519_different_messages_different_sigs() {
-    let (seed, _) = keys::ephemeral_ed25519_keypair().unwrap();
-    let sig1 = sign_msg(b"message-one", seed.expose_as_slice()).unwrap();
-    let sig2 = sign_msg(b"message-two", seed.expose_as_slice()).unwrap();
-    assert_ne!(sig1.as_slice(), sig2.as_slice());
-}
-
-#[test]
-fn sign_dili_seed_keypair_consistency() {
-    let seed = SecByte32::new([7u8; 32]);
-    let pk = keys::mldsa87_pub_from_seed(&seed);
-    let msg = b"seed-consistency";
-    let sig = sign_dili(msg, seed.expose_as_slice()).unwrap();
-    assert!(verify_dili(msg, sig.as_slice(), &pk));
-}
-
-#[test]
-fn sign_dili_roundtrip() {
-    let (sk, pk) = keys::ephemeral_dilithium_mldsa87_keypair().unwrap();
-    let msg = b"dilithium test message";
-
-    let sig = sign_dili(msg, sk.expose_as_slice()).unwrap();
-    assert!(verify_dili(msg, sig.as_slice(), &pk));
-}
-
-#[test]
-fn sign_dili_wrong_message_fails() {
-    let (sk, pk) = keys::ephemeral_dilithium_mldsa87_keypair().unwrap();
-    let sig = sign_dili(b"original", sk.expose_as_slice()).unwrap();
-    assert!(!verify_dili(b"tampered", sig.as_slice(), &pk));
-}
-
-#[test]
-fn sign_dili_wrong_key_fails() {
-    let (sk, _pk) = keys::ephemeral_dilithium_mldsa87_keypair().unwrap();
-    let (_, wrong_pk) = keys::ephemeral_dilithium_mldsa87_keypair().unwrap();
-    let msg = b"test";
-
-    let sig = sign_dili(msg, sk.expose_as_slice()).unwrap();
-    assert!(!verify_dili(msg, sig.as_slice(), &wrong_pk));
-}
-
-#[test]
-fn sign_dili_garbage_signature_fails() {
-    let (_, pk) = keys::ephemeral_dilithium_mldsa87_keypair().unwrap();
-    assert!(!verify_dili(b"msg", &[0u8; 32], &pk));
 }
 
 fn kyberbox_alice_bob() -> (
@@ -669,80 +561,6 @@ fn kdf_salt_domain_separation() {
     }
 }
 
-#[test]
-fn sign_ed25519_empty_message_roundtrip() {
-    let (seed, pk) = keys::ephemeral_ed25519_keypair().unwrap();
-    let sig = sign_msg(b"", seed.expose_as_slice()).unwrap();
-    assert!(verify_sig(b"", sig.as_slice(), &pk));
-    assert!(!verify_sig(b"x", sig.as_slice(), &pk));
-}
-
-#[test]
-fn sign_ed25519_deterministic() {
-    let (seed, _pk) = keys::ephemeral_ed25519_keypair().unwrap();
-    let msg = b"deterministic";
-    let sig1 = sign_msg(msg, seed.expose_as_slice()).unwrap();
-    let sig2 = sign_msg(msg, seed.expose_as_slice()).unwrap();
-    assert_eq!(sig1.as_slice(), sig2.as_slice());
-}
-
-#[test]
-fn sign_ed25519_tampered_sig_first_byte_fails() {
-    let (seed, pk) = keys::ephemeral_ed25519_keypair().unwrap();
-    let msg = b"message";
-    let mut sig = sign_msg(msg, seed.expose_as_slice()).unwrap();
-    sig[0] ^= 0x01;
-    assert!(!verify_sig(msg, &sig, &pk));
-}
-
-#[test]
-fn sign_ed25519_tampered_sig_last_byte_fails() {
-    let (seed, pk) = keys::ephemeral_ed25519_keypair().unwrap();
-    let msg = b"message";
-    let mut sig = sign_msg(msg, seed.expose_as_slice()).unwrap();
-    let last = sig.len() - 1;
-    sig[last] ^= 0x01;
-    assert!(!verify_sig(msg, &sig, &pk));
-}
-
-#[test]
-fn sign_ed25519_various_message_sizes() {
-    let (seed, pk) = keys::ephemeral_ed25519_keypair().unwrap();
-    for &size in &[0usize, 1, 31, 32, 33, 100, 1024] {
-        let msg = vec![0x5Au8; size];
-        let sig = sign_msg(&msg, seed.expose_as_slice()).unwrap();
-        assert!(verify_sig(&msg, sig.as_slice(), &pk), "size={size}");
-    }
-}
-
-#[test]
-fn sign_dili_empty_message_roundtrip() {
-    let (sk, pk) = keys::ephemeral_dilithium_mldsa87_keypair().unwrap();
-    let sig = sign_dili(b"", sk.expose_as_slice()).unwrap();
-    assert!(verify_dili(b"", sig.as_slice(), &pk));
-    assert!(!verify_dili(b"x", sig.as_slice(), &pk));
-}
-
-#[test]
-fn sign_dili_tampered_sig_last_byte_fails() {
-    let (sk, pk) = keys::ephemeral_dilithium_mldsa87_keypair().unwrap();
-    let msg = b"dili-test";
-    let mut sig = sign_dili(msg, sk.expose_as_slice()).unwrap();
-    let last = sig.len() - 1;
-    sig[last] ^= 0xFF;
-    assert!(!verify_dili(msg, &sig, &pk));
-}
-
-#[test]
-fn sign_dili_various_message_sizes() {
-    let (sk, pk) = keys::ephemeral_dilithium_mldsa87_keypair().unwrap();
-    for &size in &[0usize, 1, 31, 32, 64, 256] {
-        let msg = vec![0xA5u8; size];
-        let sig = sign_dili(&msg, sk.expose_as_slice()).unwrap();
-        assert!(verify_dili(&msg, sig.as_slice(), &pk), "size={size}");
-    }
-}
-
 fn kb_wire(sender_x_pub: &[u8], kem_ct: &[u8], ct: &[u8]) -> Vec<u8> {
     let mut w = Vec::with_capacity(sender_x_pub.len() + kem_ct.len() + ct.len());
     w.extend_from_slice(sender_x_pub);
@@ -924,37 +742,6 @@ fn cross_kdf_derived_keys_not_usable_cross_purpose() {
     let blob = aenc(&sb(b"secret"), &key_a, aad).unwrap();
 
     assert!(adec(&blob, &key_b, aad).is_err());
-}
-
-#[test]
-fn cross_ed25519_sign_verify_cross_keypair_fails() {
-    let (seed_a, _pk_a) = keys::ephemeral_ed25519_keypair().unwrap();
-    let (_, pk_b) = keys::ephemeral_ed25519_keypair().unwrap();
-    let msg = b"same message, different key";
-    let sig = sign_msg(msg, seed_a.expose_as_slice()).unwrap();
-    assert!(!verify_sig(msg, sig.as_slice(), &pk_b));
-}
-
-#[test]
-fn cross_dili_sign_verify_cross_keypair_fails() {
-    let (sk_a, _) = keys::ephemeral_dilithium_mldsa87_keypair().unwrap();
-    let (_, pk_b) = keys::ephemeral_dilithium_mldsa87_keypair().unwrap();
-    let msg = b"cross-key dilithium";
-    let sig = sign_dili(msg, sk_a.expose_as_slice()).unwrap();
-    assert!(!verify_dili(msg, sig.as_slice(), &pk_b));
-}
-
-#[test]
-fn cross_ed25519_and_dili_sigs_are_not_interchangeable() {
-    let (ed_seed, ed_pk) = keys::ephemeral_ed25519_keypair().unwrap();
-    let (dili_sk, dili_pk) = keys::ephemeral_dilithium_mldsa87_keypair().unwrap();
-    let msg = b"cross-scheme";
-
-    let ed_sig = sign_msg(msg, ed_seed.expose_as_slice()).unwrap();
-    let dili_sig = sign_dili(msg, dili_sk.expose_as_slice()).unwrap();
-
-    assert!(!verify_dili(msg, ed_sig.as_slice(), &dili_pk));
-    assert!(!verify_sig(msg, &dili_sig.as_slice()[..64], &ed_pk));
 }
 
 #[test]

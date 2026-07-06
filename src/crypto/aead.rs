@@ -109,7 +109,7 @@ pub fn decrypt(
     )
 }
 
-#[cfg(feature = "raw-aead")]
+#[cfg(feature = "raw")]
 pub mod raw {
     use super::*;
 

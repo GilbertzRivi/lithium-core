@@ -10,7 +10,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 arbitrary = { version = "1", features = ["derive"] }
-lithium_core = { path = "..", features = ["fuzzing"] }
+lithium_core = { path = "..", features = ["fuzzing", "raw"] }
 
 [[bin]]
 name = "keyfile_parse"
