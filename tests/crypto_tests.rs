@@ -870,3 +870,48 @@ fn kyberbox_wire_replay_to_different_recipient_fails() {
         "WirePayload addressed to bob must not decrypt for carol"
     );
 }
+
+#[test]
+fn dual_request_response_roundtrip() {
+    use lithium_core::crypto::kyberbox::DualEncryptionPrivateKey;
+
+    let (server_prekey_priv, server_prekey_pub) = DualEncryptionPrivateKey::ephemeral().unwrap();
+
+    let request = sb(b"hello server");
+    let (req_sealed, client_reply_priv) = server_prekey_pub
+        .seal(&ctx_of("req"), b"aad-req", &request)
+        .unwrap();
+
+    let (got_request, reply_to) = server_prekey_priv
+        .open(&ctx_of("req"), b"aad-req", &req_sealed)
+        .unwrap();
+    assert_eq!(got_request.expose_as_slice(), request.expose_as_slice());
+
+    let response = sb(b"hello client");
+    let (resp_sealed, _) = reply_to
+        .seal(&ctx_of("resp"), b"aad-resp", &response)
+        .unwrap();
+
+    let (got_response, _) = client_reply_priv
+        .open(&ctx_of("resp"), b"aad-resp", &resp_sealed)
+        .unwrap();
+    assert_eq!(got_response.expose_as_slice(), response.expose_as_slice());
+}
+
+#[test]
+fn dual_sealed_wire_roundtrips_and_binds() {
+    use lithium_core::crypto::kyberbox::{DualEncryptionPrivateKey, DualSealed};
+
+    let (priv_a, pub_a) = DualEncryptionPrivateKey::ephemeral().unwrap();
+    let (sealed, _reply) = pub_a.seal(&ctx_of("wire"), b"", &sb(b"payload")).unwrap();
+
+    let back = DualSealed::from_wire(&sealed.to_wire()).unwrap();
+    let (pt, _) = priv_a.open(&ctx_of("wire"), b"", &back).unwrap();
+    assert_eq!(pt.expose_as_slice(), b"payload");
+
+    let (priv_b, _pub_b) = DualEncryptionPrivateKey::ephemeral().unwrap();
+    assert!(
+        priv_b.open(&ctx_of("wire"), b"", &back).is_err(),
+        "dual sealed for A must not open for B"
+    );
+}

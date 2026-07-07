@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 use lithium_core::crypto::Context;
-#[cfg(feature = "raw")]
-use lithium_core::crypto::keys;
 use lithium_core::keys::{KeyManager, PublicCachePolicy, RotationErrorPolicy};
 
 mod common;
@@ -32,39 +30,6 @@ fn arena_backed_signing_keys_sign_and_verify() {
 
     let sig = km.sign_double(msg, &ctx).unwrap();
     assert!(km.dual_verifying_key().verify(msg, &sig, &ctx));
-
-    std::fs::remove_dir_all(&dir).ok();
-}
-
-#[cfg(feature = "raw")]
-#[test]
-fn arena_backed_x25519_kyber_load_is_correct() {
-    let dir = tmp_dir("xkyber");
-    std::fs::remove_dir_all(&dir).ok();
-    let km = KeyManager::start(
-        &dir,
-        FileMk {
-            path: dir.join("mk"),
-        },
-        PublicCachePolicy::RepairMissingOnly,
-        RotationErrorPolicy::Callback(Box::new(|_| {})),
-    )
-    .unwrap();
-
-    let x_pub = km.public_keys().x25519;
-    let kyber_pub = km.public_keys().kyber.clone();
-
-    km.with_x25519_and_kyber_sk(|x_seed, kyber_sk| {
-        assert_eq!(x_seed.len(), 32);
-        assert_eq!(kyber_sk.len(), 64);
-        assert_eq!(keys::x25519_pub_from_seed(&x_seed), x_pub);
-        assert_eq!(
-            keys::mlkem1024_pub_from_seed(&kyber_sk).as_slice(),
-            kyber_pub.as_slice()
-        );
-        Ok(())
-    })
-    .unwrap();
 
     std::fs::remove_dir_all(&dir).ok();
 }

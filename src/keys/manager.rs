@@ -13,8 +13,6 @@ use crate::crypto::sign::{DoubleSig, DualVerifyingKey};
 use crate::crypto::{aead, keys};
 use crate::error::{LithiumError, Result};
 use crate::public::{PubByte32, PublicBytes};
-#[cfg(feature = "raw")]
-use crate::secrets::ArenaByte64;
 use crate::secrets::{
     ArenaByte32, ArenaFixedBytes, MasterKey32, SecByte32, SecretArena, SecretBytes,
 };
@@ -1025,37 +1023,6 @@ impl<P: MkProvider + Send + Sync + 'static> KeyManager<P> {
         f: impl FnOnce(ArenaByte32, ArenaByte32) -> Result<R>,
     ) -> Result<R> {
         self.signing_seeds(f)
-    }
-
-    #[cfg(feature = "raw")]
-    pub fn with_x25519_and_kyber_sk<R>(
-        &self,
-        f: impl FnOnce(ArenaByte32, ArenaByte64) -> Result<R>,
-    ) -> Result<R> {
-        let (x_locked, kyber_locked) = {
-            let _gate = self.shared.read_gate()?;
-            let mk = self.shared.mk_provider.load_mk()?;
-            let x_seed = keyfile::load_secret32_decrypted(
-                &self.shared.priv_dir.join(X_PRIV),
-                &mk,
-                KT_X_SEED,
-            )?;
-            let kyber_sk = keyfile::load_bytes_decrypted(
-                &self.shared.priv_dir.join(KYBER_PRIV),
-                &mk,
-                KT_KYBER_SK,
-            )?;
-            let x_locked = self
-                .shared
-                .arena
-                .store_fixed::<32>(x_seed.expose_as_array())?;
-            let kyber_locked = self
-                .shared
-                .arena
-                .store_slice_fixed::<64>(kyber_sk.expose_as_slice())?;
-            (x_locked, kyber_locked)
-        };
-        f(x_locked, kyber_locked)
     }
 }
 

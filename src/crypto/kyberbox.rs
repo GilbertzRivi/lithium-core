@@ -13,14 +13,18 @@ use crate::{
     crypto::{aead, context::Context, kdf, keys},
     error::{LithiumError, Result},
     public::{PubByte32, PublicBytes},
-    secrets::{SecByte32, bytes::SecretBytes},
+    secrets::{SecByte32, SecByte64, bytes::SecretBytes},
 };
 
 const KYBER_BOX_VERSION: u8 = 1;
 const KYBER_KEM_ID: u8 = 1;
 
 const X25519_PUB_LEN: usize = 32;
+const MLKEM1024_PUB_LEN: usize = 1568;
 const KEM_CT_LEN: usize = 1568 + 2;
+
+const DUAL_ENC_PUB_LEN: usize = X25519_PUB_LEN + MLKEM1024_PUB_LEN;
+const DUAL_ENC_PRIV_LEN: usize = 32 + 64;
 
 #[derive(Clone, Debug)]
 pub struct KyberBoxSealed {
@@ -254,4 +258,141 @@ pub fn open(
     let plaintext = aead::decrypt(&kyber_box_sealed.ciphertext, &base_key, &data_ctx, aad)?;
 
     Ok(plaintext)
+}
+
+#[derive(Clone, Debug)]
+pub struct DualEncryptionPublicKey {
+    x25519: PubByte32,
+    mlkem1024: PublicBytes,
+}
+
+impl DualEncryptionPublicKey {
+    pub fn new(x25519: PubByte32, mlkem1024: PublicBytes) -> Result<Self> {
+        if mlkem1024.as_slice().len() != MLKEM1024_PUB_LEN {
+            return Err(LithiumError::invalid_len(
+                MLKEM1024_PUB_LEN,
+                mlkem1024.as_slice().len(),
+            ));
+        }
+        Ok(Self { x25519, mlkem1024 })
+    }
+
+    pub fn x25519(&self) -> &PubByte32 {
+        &self.x25519
+    }
+
+    pub fn mlkem1024(&self) -> &PublicBytes {
+        &self.mlkem1024
+    }
+
+    pub fn to_wire(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(DUAL_ENC_PUB_LEN);
+        out.extend_from_slice(self.x25519.as_slice());
+        out.extend_from_slice(self.mlkem1024.as_slice());
+        out
+    }
+
+    pub fn from_wire(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() != DUAL_ENC_PUB_LEN {
+            return Err(LithiumError::invalid_len(DUAL_ENC_PUB_LEN, bytes.len()));
+        }
+        Ok(Self {
+            x25519: PubByte32::from_slice(&bytes[..X25519_PUB_LEN])?,
+            mlkem1024: PublicBytes::from_slice(&bytes[X25519_PUB_LEN..]),
+        })
+    }
+
+    pub fn seal(
+        &self,
+        ctx: &Context,
+        aad: &[u8],
+        data: &SecretBytes,
+    ) -> Result<(DualSealed, DualEncryptionPrivateKey)> {
+        let (inner, _forward_eph_x) = seal(ctx, &self.x25519, &self.mlkem1024, aad, data)?;
+        let (reply_priv, reply_pub) = DualEncryptionPrivateKey::ephemeral()?;
+        Ok((DualSealed { reply_pub, inner }, reply_priv))
+    }
+}
+
+pub struct DualEncryptionPrivateKey {
+    x25519: SecByte32,
+    mlkem1024: SecByte64,
+}
+
+impl DualEncryptionPrivateKey {
+    pub fn ephemeral() -> Result<(Self, DualEncryptionPublicKey)> {
+        let (x_priv, x_pub) = keys::ephemeral_x25519_keypair()?;
+        let (k_priv, k_pub) = keys::ephemeral_kyber_mlkem1024_keypair()?;
+        Ok((
+            Self {
+                x25519: x_priv,
+                mlkem1024: k_priv,
+            },
+            DualEncryptionPublicKey {
+                x25519: x_pub,
+                mlkem1024: k_pub,
+            },
+        ))
+    }
+
+    pub fn to_wire(&self) -> SecretBytes {
+        let mut out = Vec::with_capacity(DUAL_ENC_PRIV_LEN);
+        out.extend_from_slice(self.x25519.expose_as_slice());
+        out.extend_from_slice(self.mlkem1024.expose_as_slice());
+        SecretBytes::new(out)
+    }
+
+    pub fn from_wire(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() != DUAL_ENC_PRIV_LEN {
+            return Err(LithiumError::invalid_len(DUAL_ENC_PRIV_LEN, bytes.len()));
+        }
+        Ok(Self {
+            x25519: SecByte32::from_slice(&bytes[..32])?,
+            mlkem1024: SecByte64::from_slice(&bytes[32..])?,
+        })
+    }
+
+    pub fn open(
+        &self,
+        ctx: &Context,
+        aad: &[u8],
+        sealed: &DualSealed,
+    ) -> Result<(SecretBytes, DualEncryptionPublicKey)> {
+        let plaintext = open(
+            ctx,
+            self.x25519.expose_as_slice(),
+            self.mlkem1024.expose_as_slice(),
+            aad,
+            &sealed.inner,
+        )?;
+        Ok((plaintext, sealed.reply_pub.clone()))
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct DualSealed {
+    reply_pub: DualEncryptionPublicKey,
+    inner: KyberBoxSealed,
+}
+
+impl DualSealed {
+    pub fn reply_public(&self) -> &DualEncryptionPublicKey {
+        &self.reply_pub
+    }
+
+    pub fn to_wire(&self) -> Vec<u8> {
+        let mut out = self.reply_pub.to_wire();
+        out.extend_from_slice(&self.inner.to_wire());
+        out
+    }
+
+    pub fn from_wire(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() < DUAL_ENC_PUB_LEN {
+            return Err(LithiumError::invalid_len(DUAL_ENC_PUB_LEN, bytes.len()));
+        }
+        Ok(Self {
+            reply_pub: DualEncryptionPublicKey::from_wire(&bytes[..DUAL_ENC_PUB_LEN])?,
+            inner: KyberBoxSealed::from_wire(&bytes[DUAL_ENC_PUB_LEN..])?,
+        })
+    }
 }
