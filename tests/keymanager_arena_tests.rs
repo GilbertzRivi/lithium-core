@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Lithium Project
 // SPDX-License-Identifier: AGPL-3.0-only
 
-use lithium_core::crypto::{Context, keys};
+use lithium_core::crypto::Context;
+#[cfg(feature = "raw")]
+use lithium_core::crypto::keys;
 use lithium_core::keys::{KeyManager, PublicCachePolicy, RotationErrorPolicy};
 
 mod common;
@@ -34,6 +36,7 @@ fn arena_backed_signing_keys_sign_and_verify() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+#[cfg(feature = "raw")]
 #[test]
 fn arena_backed_x25519_kyber_load_is_correct() {
     let dir = tmp_dir("xkyber");

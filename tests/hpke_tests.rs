@@ -3,8 +3,7 @@
 
 use lithium_core::crypto::Context;
 use lithium_core::hpke::{self, HpkeEnc, HpkePrivateKey, HpkePublicKey, HpkeSealed};
-use lithium_core::public::{PubByte32, PublicBytes};
-use lithium_core::secrets::{SecByte32, SecretBytes};
+use lithium_core::secrets::SecretBytes;
 
 const CTX: &str = "test/hpke/v1";
 const INFO: &[u8] = b"unit-info";
@@ -32,23 +31,8 @@ fn kp(ctx: &str, ikm: &[u8]) -> (HpkePrivateKey, HpkePublicKey) {
         .unwrap()
 }
 
-fn pub_raw(pk: &HpkePublicKey) -> (PubByte32, PublicBytes) {
-    let w = pk.to_wire();
-    (
-        PubByte32::from_slice(&w[..32]).unwrap(),
-        PublicBytes::from_slice(&w[32..]),
-    )
-}
-
-fn priv_raw(sk: &HpkePrivateKey) -> (SecByte32, SecretBytes) {
-    let w = sk.to_wire();
-    let w = w.expose_as_slice();
-    (SecByte32::from_slice(&w[..32]).unwrap(), sb(&w[32..]))
-}
-
 fn seal(pk: &HpkePublicKey, ctx: &str, info: &[u8], aad: &[u8], pt: &[u8]) -> HpkeSealed {
-    let (x_pub, k_pub) = pub_raw(pk);
-    hpke::seal_base(&ctx_of(ctx), &x_pub, &k_pub, info, aad, &sb(pt)).unwrap()
+    hpke::seal_base(&ctx_of(ctx), pk, info, aad, &sb(pt)).unwrap()
 }
 
 fn open(
@@ -58,8 +42,7 @@ fn open(
     aad: &[u8],
     sealed: &HpkeSealed,
 ) -> lithium_core::Result<SecretBytes> {
-    let (x_priv, k_priv) = priv_raw(sk);
-    hpke::open_base(&ctx_of(ctx), &x_priv, &k_priv, info, aad, sealed)
+    hpke::open_base(&ctx_of(ctx), sk, info, aad, sealed)
 }
 
 fn enc_flip(enc: &HpkeEnc, idx: usize) -> HpkeEnc {
@@ -414,8 +397,7 @@ fn full_wire_interop_seal_open() {
     let (sk, pk) = kp(CTX, b"s");
 
     let pk = HpkePublicKey::from_wire(&pk.to_wire()).unwrap();
-    let (x_pub, k_pub) = pub_raw(&pk);
-    let sealed = hpke::seal_base(&ctx_of(CTX), &x_pub, &k_pub, INFO, AAD, &sb(b"wire")).unwrap();
+    let sealed = hpke::seal_base(&ctx_of(CTX), &pk, INFO, AAD, &sb(b"wire")).unwrap();
 
     let sealed = HpkeSealed::from_wire(&sealed.to_wire()).unwrap();
 

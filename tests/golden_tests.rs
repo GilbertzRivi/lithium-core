@@ -112,11 +112,6 @@ fn hpke_sealed_opens_to_pinned_plaintext() {
         &SecretBytes::from_slice(&hex::decode(v["KP_IKM"]).unwrap()),
     )
     .unwrap();
-    let sk_wire = sk.to_wire();
-    let sk_wire = sk_wire.expose_as_slice();
-    let x_priv = SecByte32::from_slice(&sk_wire[..32]).unwrap();
-    let k_priv = SecretBytes::from_slice(&sk_wire[32..]);
-
     let info = hex::decode(v["INFO"]).unwrap();
     let aad = hex::decode(v["AAD"]).unwrap();
     let sealed = sealed_from_parts(
@@ -124,15 +119,7 @@ fn hpke_sealed_opens_to_pinned_plaintext() {
         &hex::decode(v["CIPHERTEXT"]).unwrap(),
     );
 
-    let pt = hpke::open_base(
-        &ctx_of(v["SEAL_CTX"]),
-        &x_priv,
-        &k_priv,
-        &info,
-        &aad,
-        &sealed,
-    )
-    .unwrap();
+    let pt = hpke::open_base(&ctx_of(v["SEAL_CTX"]), &sk, &info, &aad, &sealed).unwrap();
     assert_eq!(
         pt.expose_as_slice(),
         hex::decode(v["PLAINTEXT"]).unwrap().as_slice()
@@ -141,17 +128,7 @@ fn hpke_sealed_opens_to_pinned_plaintext() {
     let mut ct = sealed.ciphertext().as_slice().to_vec();
     *ct.last_mut().unwrap() ^= 0x01;
     let tampered = sealed_from_parts(&sealed.enc().to_wire(), &ct);
-    assert!(
-        hpke::open_base(
-            &ctx_of(v["SEAL_CTX"]),
-            &x_priv,
-            &k_priv,
-            &info,
-            &aad,
-            &tampered
-        )
-        .is_err()
-    );
+    assert!(hpke::open_base(&ctx_of(v["SEAL_CTX"]), &sk, &info, &aad, &tampered).is_err());
 }
 
 #[test]

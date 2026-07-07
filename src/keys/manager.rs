@@ -13,8 +13,10 @@ use crate::crypto::sign::{DoubleSig, DualVerifyingKey};
 use crate::crypto::{aead, keys};
 use crate::error::{LithiumError, Result};
 use crate::public::{PubByte32, PublicBytes};
+#[cfg(feature = "raw")]
+use crate::secrets::ArenaByte64;
 use crate::secrets::{
-    ArenaByte32, ArenaByte64, ArenaFixedBytes, MasterKey32, SecByte32, SecretArena, SecretBytes,
+    ArenaByte32, ArenaFixedBytes, MasterKey32, SecByte32, SecretArena, SecretBytes,
 };
 
 use super::keyfile;
@@ -1025,6 +1027,7 @@ impl<P: MkProvider + Send + Sync + 'static> KeyManager<P> {
         self.signing_seeds(f)
     }
 
+    #[cfg(feature = "raw")]
     pub fn with_x25519_and_kyber_sk<R>(
         &self,
         f: impl FnOnce(ArenaByte32, ArenaByte64) -> Result<R>,
