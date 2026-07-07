@@ -88,3 +88,24 @@ path = "fuzz_targets/hpke_stream.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "dual_open"
+path = "fuzz_targets/dual_open.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "dual_verify"
+path = "fuzz_targets/dual_verify.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "dual_wire"
+path = "fuzz_targets/dual_wire.rs"
+test = false
+doc = false
+bench = false

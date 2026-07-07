@@ -308,8 +308,10 @@ impl DualEncryptionPublicKey {
         aad: &[u8],
         data: &SecretBytes,
     ) -> Result<(DualSealed, DualEncryptionPrivateKey)> {
-        let (inner, _forward_eph_x) = seal(ctx, &self.x25519, &self.mlkem1024, aad, data)?;
         let (reply_priv, reply_pub) = DualEncryptionPrivateKey::ephemeral()?;
+        let mut bound_aad = reply_pub.to_wire();
+        bound_aad.extend_from_slice(aad);
+        let (inner, _forward_eph_x) = seal(ctx, &self.x25519, &self.mlkem1024, &bound_aad, data)?;
         Ok((DualSealed { reply_pub, inner }, reply_priv))
     }
 }
@@ -358,11 +360,13 @@ impl DualEncryptionPrivateKey {
         aad: &[u8],
         sealed: &DualSealed,
     ) -> Result<(SecretBytes, DualEncryptionPublicKey)> {
+        let mut bound_aad = sealed.reply_pub.to_wire();
+        bound_aad.extend_from_slice(aad);
         let plaintext = open(
             ctx,
             self.x25519.expose_as_slice(),
             self.mlkem1024.expose_as_slice(),
-            aad,
+            &bound_aad,
             &sealed.inner,
         )?;
         Ok((plaintext, sealed.reply_pub.clone()))

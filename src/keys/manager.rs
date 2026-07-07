@@ -31,17 +31,11 @@ const ROTATE_NEXT_OLD_FILE: &str = "next-mk-old.keyf";
 const ROTATE_NEXT_NEW_FILE: &str = "next-mk-new.keyf";
 
 const ED_PUB: &str = "ed25519.pub";
-const X_PUB: &str = "x25519.pub";
-const KYBER_PUB: &str = "kyber-mlkem1024.pub";
 const DILI_PUB: &str = "dilithium-mldsa87.pub";
 
 const ED_PRIV: &str = "ed25519.keyf";
-const X_PRIV: &str = "x25519.keyf";
-const KYBER_PRIV: &str = "kyber-mlkem1024.keyf";
 const DILI_PRIV: &str = "dilithium-mldsa87.keyf";
 const KT_ED_SEED: &str = "ed25519-seed-v1";
-const KT_X_SEED: &str = "x25519-seed-v1";
-const KT_KYBER_SK: &str = "kyber-mlkem1024-sk-v1";
 const KT_DILI_SEED: &str = "dilithium-mldsa87-seed-v1";
 const KT_ROTATE_NEXT_OLD: &str = "rotate-next-mk-old-v1";
 const KT_ROTATE_NEXT_NEW: &str = "rotate-next-mk-new-v1";
@@ -89,8 +83,6 @@ impl MkProvider for InsecurePlaintextMkProvider {
 #[derive(Clone)]
 pub struct PublicKeys {
     pub ed25519: PubByte32,
-    pub x25519: PubByte32,
-    pub kyber: PublicBytes,
     pub dilithium: PublicBytes,
 }
 
@@ -407,26 +399,6 @@ fn ensure_asymmetric_material(
         keys::ed25519_pub_from_seed,
     )?;
 
-    let x25519 = ensure_seed_keypair::<32, PubByte32>(
-        arena,
-        &priv_dir.join(X_PRIV),
-        &pub_dir.join(X_PUB),
-        mk,
-        KT_X_SEED,
-        public_cache_policy,
-        keys::x25519_pub_from_seed,
-    )?;
-
-    let kyber = ensure_seed_keypair::<64, PublicBytes>(
-        arena,
-        &priv_dir.join(KYBER_PRIV),
-        &pub_dir.join(KYBER_PUB),
-        mk,
-        KT_KYBER_SK,
-        public_cache_policy,
-        keys::mlkem1024_pub_from_seed,
-    )?;
-
     let dilithium = ensure_seed_keypair::<32, PublicBytes>(
         arena,
         &priv_dir.join(DILI_PRIV),
@@ -437,12 +409,7 @@ fn ensure_asymmetric_material(
         keys::mldsa87_pub_from_seed,
     )?;
 
-    Ok(PublicKeys {
-        ed25519,
-        x25519,
-        kyber,
-        dilithium,
-    })
+    Ok(PublicKeys { ed25519, dilithium })
 }
 
 fn list_dir_keyfiles(dir: &Path) -> Result<Vec<PathBuf>> {
@@ -471,8 +438,6 @@ fn collect_rewrap_targets(
 
     let fixed = [
         (priv_dir.join(ED_PRIV), KT_ED_SEED.to_owned()),
-        (priv_dir.join(X_PRIV), KT_X_SEED.to_owned()),
-        (priv_dir.join(KYBER_PRIV), KT_KYBER_SK.to_owned()),
         (priv_dir.join(DILI_PRIV), KT_DILI_SEED.to_owned()),
     ];
 
@@ -1033,16 +998,12 @@ mod tests {
     #[test]
     fn registry_values_are_pinned() {
         assert_eq!(KT_ED_SEED, "ed25519-seed-v1");
-        assert_eq!(KT_X_SEED, "x25519-seed-v1");
-        assert_eq!(KT_KYBER_SK, "kyber-mlkem1024-sk-v1");
         assert_eq!(KT_DILI_SEED, "dilithium-mldsa87-seed-v1");
         assert_eq!(KT_ROTATE_NEXT_OLD, "rotate-next-mk-old-v1");
         assert_eq!(KT_ROTATE_NEXT_NEW, "rotate-next-mk-new-v1");
         assert_eq!(label_key_type(b"ab"), "secret32:6162");
 
         assert_eq!(ED_PRIV, "ed25519.keyf");
-        assert_eq!(X_PRIV, "x25519.keyf");
-        assert_eq!(KYBER_PRIV, "kyber-mlkem1024.keyf");
         assert_eq!(DILI_PRIV, "dilithium-mldsa87.keyf");
     }
 }

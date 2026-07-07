@@ -915,3 +915,29 @@ fn dual_sealed_wire_roundtrips_and_binds() {
         "dual sealed for A must not open for B"
     );
 }
+
+#[test]
+fn dual_sealed_mitm_reply_key_swap_is_rejected() {
+    use lithium_core::crypto::kyberbox::{DualEncryptionPrivateKey, DualSealed};
+
+    let (priv_a, pub_a) = DualEncryptionPrivateKey::ephemeral().unwrap();
+    let (sealed, _reply) = pub_a.seal(&ctx_of("mitm"), b"aad", &sb(b"secret")).unwrap();
+
+    let (_attacker_priv, attacker_pub) = DualEncryptionPrivateKey::ephemeral().unwrap();
+    let attacker_pub_wire = attacker_pub.to_wire();
+    let prefix = attacker_pub_wire.len();
+
+    let mut tampered = sealed.to_wire();
+    tampered[..prefix].copy_from_slice(&attacker_pub_wire);
+
+    let forged = DualSealed::from_wire(&tampered).unwrap();
+    assert_eq!(
+        forged.reply_public().to_wire(),
+        attacker_pub_wire,
+        "swap must land in the parsed reply key"
+    );
+    assert!(
+        priv_a.open(&ctx_of("mitm"), b"aad", &forged).is_err(),
+        "swapped reply key must break the inner AEAD tag"
+    );
+}

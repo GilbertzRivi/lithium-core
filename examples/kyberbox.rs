@@ -1,31 +1,34 @@
 // SPDX-FileCopyrightText: 2026 Lithium Project
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! Hybrid X25519 + ML-KEM-1024 anonymous encryption round-trip (Pillar 2).
+//! Hybrid X25519 + ML-KEM-1024 dual encryption with a bundled reply key (Pillar 2).
 //!
 //! Run with: `cargo run -p lithium_core --example kyberbox`
 
-use lithium_core::crypto::{Context, keys, kyberbox};
+use lithium_core::crypto::Context;
+use lithium_core::crypto::kyberbox::DualEncryptionPrivateKey;
 use lithium_core::secrets::SecretBytes;
 
 fn main() -> lithium_core::Result<()> {
     let ctx = Context::base("myapp")?.add("message")?;
 
-    let (recipient_priv_x, recipient_pub_x) = keys::ephemeral_x25519_keypair()?;
-    let (recipient_kyber_priv, recipient_kyber_pub) = keys::ephemeral_kyber_mlkem1024_keypair()?;
+    let (bob_priv, bob_pub) = DualEncryptionPrivateKey::ephemeral()?;
 
-    let body = SecretBytes::from_slice(b"attack at dawn");
+    let request = SecretBytes::from_slice(b"attack at dawn");
+    let (sealed, alice_reply_priv) = bob_pub.seal(&ctx, b"", &request)?;
 
-    let (wire, _sender_priv_x) =
-        kyberbox::seal(&ctx, &recipient_pub_x, &recipient_kyber_pub, b"", &body)?;
+    let (got_request, alice_reply_pub) = bob_priv.open(&ctx, b"", &sealed)?;
+    assert_eq!(got_request.expose_as_slice(), request.expose_as_slice());
 
-    let plain_data = kyberbox::open(&ctx, &recipient_priv_x, &recipient_kyber_priv, b"", &wire)?;
+    let reply = SecretBytes::from_slice(b"hold the line");
+    let (sealed_reply, _) = alice_reply_pub.seal(&ctx, b"", &reply)?;
 
-    assert_eq!(plain_data.expose_as_slice(), body.expose_as_slice());
+    let (got_reply, _) = alice_reply_priv.open(&ctx, b"", &sealed_reply)?;
+    assert_eq!(got_reply.expose_as_slice(), reply.expose_as_slice());
 
     println!(
-        "kyberbox round-trip ok ({} sealed body bytes)",
-        wire.ciphertext().as_slice().len()
+        "kyberbox dual request/reply round-trip ok ({} sealed wire bytes)",
+        sealed.to_wire().len()
     );
     Ok(())
 }

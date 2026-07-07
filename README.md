@@ -53,36 +53,27 @@ cargo run --features insecure-plaintext-mk --example keyfile
 ```
 
 ```rust
-use lithium_core::crypto::{Context, keys, kyberbox};
+use lithium_core::crypto::Context;
+use lithium_core::crypto::kyberbox::DualEncryptionPrivateKey;
 use lithium_core::secrets::SecretBytes;
 
 // Domain separation, built from validated segments; the library adds the /v1.
 let ctx = Context::base("myapp")?.add("message")?;
 
-let (recipient_priv_x, recipient_pub_x) = keys::ephemeral_x25519_keypair()?;
-let (recipient_kyber_priv, recipient_kyber_pub) = keys::ephemeral_kyber_mlkem1024_keypair()?;
+// The recipient's hybrid (X25519 + ML-KEM-1024) encryption keypair.
+let (recipient_priv, recipient_pub) = DualEncryptionPrivateKey::ephemeral()?;
 
 let body = SecretBytes::from_slice(b"Hello world!");
 
-// `seal` draws a fresh ephemeral sender key per call; its public half is
-// carried inside `wire`. It also returns the matching secret: drop it for
-// one-shot anonymous sealing, or keep it to open a reply.
-// `aad` is an optional caller header bound into the ciphertext (b"" = none).
-let (wire, _sender_priv_x) = kyberbox::seal(
-    &ctx,
-    &recipient_pub_x,
-    &recipient_kyber_pub,
-    b"",
-    &body,
-)?;
+// `seal` draws a fresh reply keypair per call and bundles its public half
+// into `sealed`, bound into the ciphertext so a MITM cannot swap it. It
+// returns the matching reply secret: drop it for one-shot sealing, or keep
+// it to open the recipient's reply. `aad` is an optional caller header
+// bound into the ciphertext (b"" = none).
+let (sealed, _reply_priv) = recipient_pub.seal(&ctx, b"", &body)?;
 
-let plain = kyberbox::open(
-    &ctx,
-    &recipient_priv_x,
-    &recipient_kyber_priv,
-    b"",
-    &wire,
-)?;
+// `open` returns the plaintext and the reply public key the sender bundled in.
+let (plain, _reply_pub) = recipient_priv.open(&ctx, b"", &sealed)?;
 
 assert_eq!(plain.expose_as_slice(), body.expose_as_slice());
 ```

@@ -83,6 +83,18 @@ The `ctx` and `aad` at `decrypt` must match the ones used at
 `encrypt`; a mismatch fails authentication. An empty `aad` is
 valid, as long as both sides use the same value.
 
+Behind the non-default `raw` feature, `aead::raw` exposes
+explicit-nonce variants for callers that manage the nonce themselves:
+
+```
+raw::encrypt(plaintext: &SecretBytes, key, nonce: &SecByte12, aad) -> PublicBytes
+raw::decrypt(ciphertext: &PublicBytes, key, nonce: &SecByte12, aad) -> SecretBytes
+```
+
+The caller owns nonce uniqueness here; reusing a nonce under one key
+breaks AEAD security. The default `encrypt`/`decrypt` above draw and
+embed the nonce for you and should be preferred.
+
 #### `crypto::kdf`: key derivation
 
 HKDF-SHA256. One call derives 32 bytes of key.
@@ -111,36 +123,43 @@ sha256(data: &[u8]) -> SecByte32
 
 #### `crypto::sign`: digital signatures
 
-Dual signature: every message is signed classically and 
-post-quantum at the same time.
+Dual signature: every message is signed classically (Ed25519) and 
+post-quantum (ML-DSA-87) at the same time, and the two are verified as
+one AND-combined unit. The signing seeds never leave the `KeyManager`,
+so the public surface is the sealed types and the manager methods:
 
 ```
-// Hybrid: sign/verify both schemes as one unit (preferred)
-sign_double(message, ed_seed, dili_sk, ctx: &Context) -> DoubleSig
-verify_double(message, &DoubleSig, ed_pub: &PubByte32, dili_pub: &PublicBytes, ctx: &Context) -> bool
-DoubleSig::{to_bytes, from_bytes, to_hex, from_hex}   // ed(64) || dili wire form
+DoubleSig                      // one dual signature; wire form ed(64) || dili
+DoubleSig::{to_bytes, from_bytes, to_hex, from_hex}
 
-// Single-scheme primitives
-sign_message(message, priv_ed_seed, ctx: &Context) -> Vec<u8>           // Ed25519, 64 bytes
-verify_signature(message, signature: &[u8], pub_key: &PubByte32, ctx: &Context) -> bool
-sign_message_dili(message, dili_sk_bytes, ctx: &Context) -> Vec<u8>     // ML-DSA-87 / Dilithium
-verify_signature_dili(message, signature: &[u8], dili_pk_bytes: &PublicBytes, ctx: &Context) -> bool
+DualVerifyingKey               // ed25519 + ML-DSA-87 public keys as one verifier
+DualVerifyingKey::to_wire() -> Vec<u8>            // ed(32) || mldsa(2592)
+DualVerifyingKey::from_wire(bytes) -> Result<Self>
+DualVerifyingKey::verify(message, sig: &DoubleSig, ctx: &Context) -> bool
+
+// Signing / verifier material come from the KeyManager:
+KeyManager::sign_double(message, ctx: &Context) -> Result<DoubleSig>
+KeyManager::dual_verifying_key() -> DualVerifyingKey
 ```
 
 Every signature is computed over `ctx` bound with the message, so a
 signature only verifies under the same `Context`; sign and verify must
-use the same one. A signature is a public authenticator, not a secret,
-so it is returned as a plain `Vec<u8>`; verification takes the public
-key as a public type (`PubByte32` for Ed25519, `PublicBytes` for
-ML-DSA-87).
+use the same one. A signature is a public authenticator, not a secret.
 
-`verify_double` is AND: it returns true only when both branches verify,
-so a forgery requires breaking both schemes and the result stays secure
-while either one holds. Prefer it over calling the two primitives
-separately, which lets a caller check only one branch and silently
-downgrade to a single scheme. `DoubleSig` owns the wire form
-(`ed(64) || dili`) so callers never hand-split the two signatures;
-`from_hex` enforces the crate's lowercase, no-prefix hex.
+`DualVerifyingKey::verify` is AND: it returns true only when both
+branches verify, so a forgery requires breaking both schemes and the
+result stays secure while either one holds. There is no single-branch
+verify on the public surface, so a caller cannot silently downgrade to
+one scheme. `DoubleSig` owns the wire form (`ed(64) || dili`) so callers
+never hand-split the two signatures; `from_hex` enforces the crate's
+lowercase, no-prefix hex.
+
+Behind the non-default `raw` feature, `sign::raw` exposes the bare
+single-scheme and double primitives (`sign_message`,
+`verify_signature`, `sign_message_dili`, `verify_signature_dili`,
+`sign_double`, `verify_double`) that take seed and key bytes directly.
+They let a caller check one branch in isolation, so they are opt-in and
+off by default; prefer `DualVerifyingKey` and the `KeyManager` methods.
 
 #### `crypto::keys`: generating cryptographic material
 
@@ -254,6 +273,34 @@ an additional binding, not a substitute for `ctx`.
 The full construction, properties, and open questions: 
 [`kyberbox.md`](kyberbox.md).
 
+**Dual encryption (seal with a bundled reply key):** a thin layer over
+`seal`/`open` for request/response. Sealing draws a fresh recipient
+keypair for the reply and ships its public half inside the sealed
+message; opening hands that reply key back so the peer can answer.
+
+```rust
+pub struct DualEncryptionPublicKey  { /* x25519 pub + ML-KEM pub */ }   // to_wire/from_wire: 32 + 1568
+pub struct DualEncryptionPrivateKey { /* x25519 priv + ML-KEM seed */ } // to_wire -> SecretBytes: 32 + 64
+pub struct DualSealed                { /* reply_pub + inner KyberBoxSealed */ }
+
+DualEncryptionPrivateKey::ephemeral() -> (Self, DualEncryptionPublicKey)
+DualEncryptionPublicKey::new(x25519: PubByte32, mlkem1024: PublicBytes) -> Result<Self>
+DualEncryptionPublicKey::seal(&self, ctx, aad, data) -> (DualSealed, DualEncryptionPrivateKey)
+DualEncryptionPrivateKey::open(&self, ctx, aad, &DualSealed) -> (SecretBytes, DualEncryptionPublicKey)
+DualSealed::reply_public() -> &DualEncryptionPublicKey
+DualSealed::{to_wire, from_wire}   // reply_pub || inner KyberBoxSealed
+```
+
+`seal` returns the sealed message and the matching reply private key
+(keep it to open the peer's reply). `open` returns the plaintext and the
+reply public key the peer bundled in.
+
+`reply_pub` rides outside the inner ciphertext, so it is bound into the
+inner AEAD as associated data (prepended to the caller's `aad`, a
+fixed-length prefix so the concatenation stays unambiguous). A
+man-in-the-middle that swaps the reply key breaks the inner tag and
+`open` fails. This is defense in depth, not sender authentication.
+
 ---
 
 ### `hpke`: hybrid HPKE-style seal / open and export
@@ -268,9 +315,9 @@ provided.
 derive_keypair_from_high_entropy_ikm(ctx: &Context, ikm: &SecretBytes) -> (HpkePrivateKey, HpkePublicKey)   // deterministic
 random_keypair(ctx: &Context) -> (HpkePrivateKey, HpkePublicKey)   // fresh random ikm
 
-seal_base(ctx: &Context, recipient_x_pub: &PubByte32, recipient_k_pub: &PublicBytes,
+seal_base(ctx: &Context, recipient_pk: &HpkePublicKey,
           info, aad, plaintext: &SecretBytes) -> HpkeSealed
-open_base(ctx: &Context, recipient_x_priv: &SecByte32, recipient_k_priv: &SecretBytes,
+open_base(ctx: &Context, recipient_sk: &HpkePrivateKey,
           info, aad, sealed: &HpkeSealed) -> SecretBytes
 
 // Multi-message: one KEM setup, then many messages under a sequence nonce.
@@ -324,7 +371,8 @@ pub struct HpkeSealed     { /* enc, ciphertext - both pub(crate) */ } // enc()/c
 
 `HpkeEnc`, `HpkePublicKey` and `HpkeSealed` expose `to_wire()` /
 `from_wire()` for transport; `HpkePrivateKey::to_wire()` returns a
-`SecretBytes`.
+`SecretBytes`. `HpkeSealed::from_parts(enc, ciphertext)` rebuilds a
+sealed message from its two wire pieces when they travel separately.
 
 ---
 
@@ -345,13 +393,9 @@ rotation, and recovers an interrupted rotation.
     .lock                     (exclusive advisory lock, held for the manager's lifetime)
     pub/
       ed25519.pub
-      x25519.pub
-      kyber-mlkem1024.pub
       dilithium-mldsa87.pub
     priv/
       ed25519.keyf            (encrypted keyfile)
-      x25519.keyf
-      kyber-mlkem1024.keyf
       dilithium-mldsa87.keyf
     secrets/
       {hex_label}.keyf        (arbitrary derived secrets)
@@ -384,7 +428,7 @@ rotates the MK once the interval elapses; the caller drives nothing.
 The default interval is **3600 seconds** (1 hour), adjustable with
 `set_rotate_interval`. Rotation runs under an internal write lock, so
 it is serialized against every operation that reads key material -
-concurrent `with_signing_seeds`/`get_or_create_secret32` calls never observe a
+concurrent `sign_double`/`get_or_create_secret32` calls never observe a
 half-rewrapped store. A rotation failure is routed through the
 `RotationErrorPolicy` given at `start` (see below), never silently
 dropped.
@@ -423,9 +467,12 @@ KeyManager::start_with_config(base_dir, mk_provider, config, rotation_error_poli
 #[cfg(feature = "insecure-plaintext-mk")]  // dev/tests only
 KeyManager::start_plain(base_dir, public_cache_policy, rotation_error_policy) -> Result<KeyManager<InsecurePlaintextMkProvider>>
 
-// Access to private keys (callback pattern, loaded only for the call)
+// Dual signing (seeds loaded only for the call, never handed out)
+manager.sign_double(message: &[u8], ctx: &Context) -> Result<DoubleSig>
+manager.dual_verifying_key() -> DualVerifyingKey
+
+#[cfg(feature = "raw")]  // opt-in raw access to the signing seeds
 manager.with_signing_seeds(|ed_seed: ArenaByte32, dili_sk: ArenaByte32| { ... }) -> Result<R>
-manager.with_x25519_and_kyber_sk(|x_seed: ArenaByte32, kyber_sk: ArenaByte64| { ... }) -> Result<R>
 
 // Public keys / memory-locking state
 manager.public_keys() -> PublicKeys     // owned snapshot (cloned from behind the lock)
@@ -448,6 +495,13 @@ sealing it under the MK on first use and loading it thereafter.
 key, so a round-trip needs the same label and `aad`.
 `load_or_create_sealed_blob` is the variable-length variant: it seals the
 output of `generate` under the label on first use.
+
+`sign_double` loads the Ed25519 and ML-DSA-87 signing seeds into the
+locked arena for the call, signs `message` under `ctx` with both, and
+drops the seeds; the seeds are never handed to the caller.
+`dual_verifying_key` returns the matching `DualVerifyingKey` (see
+[`crypto::sign`](#cryptosign-digital-signatures)). Raw access to the
+seeds through `with_signing_seeds` exists only under the `raw` feature.
 
 The label of a label-based secret is 1 to 64 bytes; outside that range
 the call fails with `MalformedInput { reason: "secret_label_len" }`. The
@@ -492,21 +546,21 @@ proceeds on swappable memory; `memory_locked()` then reports the actual
 state (log or attest it, do not surface it as a user prompt). The two
 constructors are the `MemoryLocking::{Require, BestEffort}` policy,
 re-exported as `keys::MemoryLocking`.
-Private keys are load-on-demand: the callback receives them as 
-arena-backed handles (`ArenaByte32`, `ArenaByte64`) decrypted 
-into locked memory for the call and dropped after. Confinement past 
-the callback is not enforced by the type system, so the caller must 
-not persist or leak them. The seeds themselves (ed25519/x25519/
-ML-KEM/ML-DSA - all 32/64-byte seeds) are generated born-locked from 
-the system CSRNG at first run.
+Private keys are load-on-demand: `sign_double` decrypts the signing
+seeds into arena-backed handles (`ArenaByte32`) in locked memory for the
+call and drops them after; the seeds never leave the manager. The `raw`
+feature reopens the same path as the `with_signing_seeds` callback, and
+there confinement past the callback is not enforced by the type system,
+so the caller must not persist or leak the handles. The signing seeds
+(ed25519 and ML-DSA-87, both 32-byte seeds) are generated born-locked
+from the system CSRNG at first run; `KeyManager` holds a signing identity
+only, and encryption keys live in the ephemeral `kyberbox` dual types.
 
 **`PublicKeys`:**
 
 ```rust
 pub struct PublicKeys {
     pub ed25519: PubByte32,
-    pub x25519: PubByte32,
-    pub kyber: PublicBytes,
     pub dilithium: PublicBytes,
 }
 ```
@@ -682,9 +736,9 @@ harden_process() -> Result<()>   // opt-in, process-global; per OS:
 Scope is genuinely long-lived keys only (master key, seeds, 
 ML-KEM/ML-DSA secret keys); ephemeral values 
 (nonces, HPKE shared secrets) are not worth the arena. `KeyManager` 
-wires it in: it born-locks every seed it generates and hands 
-`with_signing_seeds` / 
-`with_x25519_and_kyber_sk` arena-backed handles. `harden_process()` 
+wires it in: it born-locks every seed it generates and loads them into
+arena-backed handles for a `sign_double` (or `raw` `with_signing_seeds`)
+call. `harden_process()` 
 is opt-in and never called implicitly, since it sets process-global 
 state. Call it once from the top-level binary (not a library), as 
 early in `main` as possible and before the first secret is loaded or 
@@ -940,8 +994,8 @@ Selected `ErrorKind` variants:
 | `sha2`          | 0.10.9      | SHA-256 (HKDF, transcript binding)         |
 | `ml-kem`        | 0.3.2       | ML-KEM-1024 (Kyber) KEM                    |
 | `ml-dsa`        | 0.1.1       | ML-DSA-87 (Dilithium) signatures          |
-| `ed25519-dalek` | 2.2.0       | Ed25519 (signatures)                       |
-| `x25519-dalek`  | 2.0.1       | X25519 (ECDH)                              |
+| `ed25519-dalek` | 3.0.0       | Ed25519 (signatures)                       |
+| `x25519-dalek`  | 3.0.0       | X25519 (ECDH)                              |
 | `argon2`        | 0.5.3       | Argon2id (password hash, DEK wrap)         |
 | `opaque-ke`     | 4.0.1       | OPAQUE PAKE (export-key DEK wrapping)      |
 | `zeroize`       | 1.8.2       | Memory zeroization                         |
@@ -970,6 +1024,10 @@ Cargo features (both off by default):
 - `insecure-plaintext-mk`: enables `InsecurePlaintextMkProvider` and
   `KeyManager::start_plain`, which store the master key in cleartext.
   For dev/tests only; never enable in production.
+- `raw`: exposes low-level primitives (explicit-nonce `aead::raw`, the
+  bare `sign::raw` sign/verify, and `KeyManager::with_signing_seeds`).
+  Opt in only if you manage the invariants (nonce uniqueness,
+  both-branch verification, seed confinement) yourself.
 - `fuzzing`: test-only hooks for the fuzz targets under `fuzz/`.
 
 ---
@@ -982,10 +1040,11 @@ what is the caller's responsibility) is in
 argument is in [`kyberbox.md`](kyberbox.md). The concrete 
 mechanisms behind those guarantees:
 
-- **Private-key confidentiality**: access only through a callback 
-  (`with_signing_seeds`, `with_x25519_and_kyber_sk`); `KeyManager` 
-  loads the key for the call and does not retain it afterwards. 
-  Confinement past the callback is the caller's responsibility.
+- **Private-key confidentiality**: signing goes through
+  `sign_double`, which loads the seeds for the call and does not retain
+  them; the seeds are never handed out (bare `with_signing_seeds` access
+  exists only under the `raw` feature, where confinement past the
+  callback is the caller's responsibility).
 - **Domain separation**: every KDF/AEAD operation runs under a 
   unique `info`/`aad` label.
 - **Zeroization**: `SecretFixedBytes`/`SecretBytes`/`SecretString`/`SecretJson` 

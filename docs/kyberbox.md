@@ -29,7 +29,7 @@ All versions are pinned in `Cargo.lock`.
 
 | Primitive       | Implementation                             | Version         |
 |-----------------|--------------------------------------------|-----------------|
-| X25519 ECDH     | `x25519-dalek` / `curve25519-dalek`        | 2.0.1 / 4.1.3   |
+| X25519 ECDH     | `x25519-dalek` / `curve25519-dalek`        | 3.0.0 / 4.1.3   |
 | ML-KEM-1024     | `ml-kem` (RustCrypto, pure Rust, FIPS 203) | 0.3.2           |
 | AES-256-GCM-SIV | `aes-gcm-siv`                              | 0.11.1          |
 | HKDF-SHA256     | `hkdf` + `sha2`                            | 0.12.4 / 0.10.9 |
@@ -182,6 +182,32 @@ includes `ct_T` and `SHA256(ct_kem)`, so `enc_data` decrypts only
 when all of them match. Swapping in a field from another message 
 fails AEAD, which reads as transmission corruption, not as a 
 protocol-level signal.
+
+## Dual encryption layer (reply keys)
+
+`DualEncryptionPublicKey`/`DualEncryptionPrivateKey`/`DualSealed` wrap
+`seal`/`open` for request/response. `DualEncryptionPublicKey::seal` draws
+a fresh reply keypair (X25519 + ML-KEM-1024), seals the payload to the
+recipient, and ships the reply *public* key alongside the sealed message
+in `DualSealed`. `open` returns the plaintext and that reply public key,
+so the recipient can encrypt an answer back to the sender's ephemeral
+reply key.
+
+The reply public key rides outside the inner ciphertext (`DualSealed` is
+`reply_pub || inner`), so on its own it is unauthenticated wire data. To
+keep a man-in-the-middle from swapping it for their own reply key (which
+would redirect the peer's reply to the attacker), `seal` binds it into
+the inner AEAD as associated data: the inner `aad` is
+`reply_pub.to_wire() || caller_aad`. `reply_pub.to_wire()` is fixed
+length (`DUAL_ENC_PUB_LEN`), so prepending it keeps the concatenation
+unambiguous. `open` reconstructs the same AAD from the received
+`reply_pub`; a swap changes the AAD, the inner tag fails, and `open`
+errors.
+
+This is defense in depth, not sender authentication: like the rest of
+KyberBox, it binds the key it was handed without checking whose key it
+is. It only guarantees that the reply key the recipient sees is the one
+the sender sealed, not that the sender is who they claim.
 
 ## Open risks and questions for the auditor
 

@@ -9,15 +9,16 @@
 //!
 //! Run with: `cargo run --features insecure-plaintext-mk -p lithium_core --example keyfile`
 
+use lithium_core::keys::keyfile::ensure_private_dir;
 use lithium_core::keys::{
     InsecurePlaintextMkProvider, KeyManager, PublicCachePolicy, RotationErrorPolicy,
 };
 
 fn main() -> lithium_core::Result<()> {
     let dir = std::env::temp_dir().join(format!("lithium_keyfile_example_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).ok();
+    ensure_private_dir(&dir)?;
 
-    // First run generates the X25519/Ed25519/ML-KEM/ML-DSA identity and seals each private key
+    // First run generates the Ed25519/ML-DSA-87 signing identity and seals each private key
     // under the master key held by the provider.
     let km = KeyManager::start(
         &dir,
@@ -40,7 +41,7 @@ fn main() -> lithium_core::Result<()> {
     let again = reopened.public_keys();
 
     assert_eq!(first.ed25519.as_slice(), again.ed25519.as_slice());
-    assert_eq!(first.x25519.as_slice(), again.x25519.as_slice());
+    assert_eq!(first.dilithium.as_slice(), again.dilithium.as_slice());
 
     println!("identity persisted and stable across restart");
 

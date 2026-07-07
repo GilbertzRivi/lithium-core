@@ -160,12 +160,13 @@ unlocked, swappable page.
   `harden_process`. Freed slots are zeroized and reused; the whole
   region is zeroized, unlocked and unmapped/freed on drop.
 - **`KeyManager` wires it in.** Every long-lived private key here is
-  a 32/64-byte seed (ed25519, x25519, ML-KEM, ML-DSA), and new
+  a 32-byte signing seed (ed25519, ML-DSA-87), and new
   material is generated born-locked: the seed bytes are filled from
   the system CSRNG straight into the arena, then the keypair is
   derived via `from_seed`. Private keys are load-on-demand:
-  `with_signing_seeds` / `with_x25519_and_kyber_sk` decrypt into
-  arena-backed handles for the call and drop them after.
+  `sign_double` decrypts the signing seeds into arena-backed handles for
+  the call and drops them after (the `raw` feature reopens the same path
+  as the `with_signing_seeds` callback).
 - **`secrets::harden_process()`** is opt-in - the embedder calls it;
   the library never sets process-global state implicitly. On
   Linux/Android it applies `PR_SET_DUMPABLE 0` and on Unix it sets

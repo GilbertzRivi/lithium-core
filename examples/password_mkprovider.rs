@@ -15,7 +15,7 @@ use argon2::Argon2;
 use zeroize::Zeroize;
 
 use lithium_core::crypto::{Context, aead, keys};
-use lithium_core::keys::keyfile::{read_keyfile_bytes, write_secure};
+use lithium_core::keys::keyfile::{ensure_private_dir, read_keyfile_bytes, write_secure};
 use lithium_core::keys::{KeyManager, MkProvider, PublicCachePolicy, RotationErrorPolicy};
 use lithium_core::public::PublicBytes;
 use lithium_core::secrets::{SecByte32, SecretBytes};
@@ -83,7 +83,7 @@ fn main() -> Result<()> {
         "lithium_password_mk_example_{}",
         std::process::id()
     ));
-    std::fs::create_dir_all(&dir).ok();
+    ensure_private_dir(&dir)?;
 
     let make = || PasswordMkProvider {
         path: dir.join("mk.sealed"),
@@ -110,7 +110,7 @@ fn main() -> Result<()> {
     let again = reopened.public_keys();
 
     assert_eq!(first.ed25519.as_slice(), again.ed25519.as_slice());
-    assert_eq!(first.x25519.as_slice(), again.x25519.as_slice());
+    assert_eq!(first.dilithium.as_slice(), again.dilithium.as_slice());
 
     println!("password-sealed identity persisted and stable across restart");
 
