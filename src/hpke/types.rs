@@ -72,6 +72,13 @@ impl HpkeSealed {
         &self.ciphertext
     }
 
+    pub fn from_parts(enc: &[u8], ciphertext: &[u8]) -> Result<Self> {
+        Ok(Self {
+            enc: HpkeEnc::from_wire(enc)?,
+            ciphertext: PublicBytes::from_slice(ciphertext),
+        })
+    }
+
     pub fn to_wire(&self) -> Vec<u8> {
         let enc = self.enc.to_wire();
         let ct = self.ciphertext.as_slice();
