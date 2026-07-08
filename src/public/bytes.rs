@@ -3,6 +3,8 @@
 
 use core::fmt;
 
+use serde::{Deserialize, Serialize};
+
 use crate::error::{LithiumError, Result};
 use crate::hexcodec;
 
@@ -92,7 +94,7 @@ impl<const N: usize> TryFrom<&[u8]> for PublicFixedBytes<N> {
 
 pub type PubByte32 = PublicFixedBytes<32>;
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PublicBytes(Vec<u8>);
 
 impl PublicBytes {
