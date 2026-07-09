@@ -108,6 +108,7 @@ pub struct KeyManagerConfig {
     locking: MemoryLocking,
     public_cache_policy: PublicCachePolicy,
     rotate_every: Duration,
+    rotation_enabled: bool,
     arena_capacity: usize,
 }
 
@@ -121,12 +122,22 @@ impl KeyManagerConfig {
             locking,
             public_cache_policy,
             rotate_every: Self::DEFAULT_ROTATE_EVERY,
+            rotation_enabled: true,
             arena_capacity: Self::DEFAULT_ARENA_CAPACITY,
         }
     }
 
     pub fn rotate_every(mut self, interval: Duration) -> Self {
         self.rotate_every = interval;
+        self
+    }
+
+    // Disable master-key rotation entirely: no rotation thread is spawned. Only sound
+    // when the MK is derived deterministically from a hardware-backed key and never
+    // persists in raw form, so there is nothing to rotate.
+    #[cfg(feature = "no-mk-rotation")]
+    pub fn never_rotate(mut self) -> Self {
+        self.rotation_enabled = false;
         self
     }
 
@@ -751,9 +762,10 @@ impl<P: MkProvider + Send + Sync + 'static> KeyManager<P> {
             locking,
             public_cache_policy,
             rotate_every,
+            rotation_enabled,
             arena_capacity,
         } = config;
-        if rotate_every < KeyManagerConfig::MIN_ROTATE_EVERY {
+        if rotation_enabled && rotate_every < KeyManagerConfig::MIN_ROTATE_EVERY {
             return Err(LithiumError::malformed_input("rotate_every_too_small"));
         }
         let root_dir = base_dir.join("KeyManager");
@@ -819,18 +831,21 @@ impl<P: MkProvider + Send + Sync + 'static> KeyManager<P> {
             _lock_file: lock_file,
         });
 
-        let worker = shared.clone();
-        let handle = thread::Builder::new()
-            .name("lithium-mk-rotation".into())
-            .spawn(move || rotate_loop(&worker))
-            .map_err(LithiumError::io)?;
+        let handle = if rotation_enabled {
+            let worker = shared.clone();
+            Some(
+                thread::Builder::new()
+                    .name("lithium-mk-rotation".into())
+                    .spawn(move || rotate_loop(&worker))
+                    .map_err(LithiumError::io)?,
+            )
+        } else {
+            None
+        };
 
         Ok(Self {
             shared: shared.clone(),
-            _rotation: Arc::new(RotationGuard {
-                shared,
-                handle: Some(handle),
-            }),
+            _rotation: Arc::new(RotationGuard { shared, handle }),
         })
     }
 

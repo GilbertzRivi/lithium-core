@@ -14,6 +14,8 @@ fuzzing = []
 insecure-plaintext-mk = []
 # Low-level primitives (explicit-nonce AEAD, bare sign/verify, raw signing-seed access). Off by default; opt in only if you manage the invariants yourself.
 raw = []
+# Allow disabling master-key rotation (KeyManagerConfig::never_rotate). Off by default. Opt in only when the MK is derived deterministically from a hardware-backed key (e.g. TEE/Keystore) and never persists in raw form, so there is nothing to rotate.
+no-mk-rotation = []
 
 [dependencies]
 ed25519-dalek = { version = "3.0.0", features = ["zeroize"] }
