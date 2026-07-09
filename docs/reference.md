@@ -538,14 +538,20 @@ manager's lifetime, so exactly one instance drives a store directory; a
 second `start` on the same directory returns `keystore_locked`. This is a
 single-writer contract on a local filesystem (`flock` is unreliable over
 NFS); scaling out means one store directory per instance, not sharing one.
+Where advisory locking is unsupported by the platform (e.g. `flock` on
+Android), `start` fails closed. `KeyManagerConfig::file_lock_best_effort`
+(behind the `best-effort` feature) instead proceeds without the lock and
+reports the reason to a callback; a live second instance is still rejected,
+because two writers on one store cannot coexist.
 
 `KeyManager` owns a small `SecretArena` (see `secrets::arena`). `start`
 is fail-closed: if that arena cannot be locked into RAM it returns an
-error. `start_best_effort` is the deliberate opt-in that instead
-proceeds on swappable memory; `memory_locked()` then reports the actual
-state (log or attest it, do not surface it as a user prompt). The two
-constructors are the `MemoryLocking::{Require, BestEffort}` policy,
-re-exported as `keys::MemoryLocking`.
+error. `start_best_effort` (behind the `best-effort` feature) is the
+deliberate opt-in that instead proceeds on swappable memory;
+`memory_locked()` then reports the actual state (log or attest it, do not
+surface it as a user prompt). The two constructors are the
+`MemoryLocking::{Require, BestEffort}` policy, re-exported as
+`keys::MemoryLocking`.
 Private keys are load-on-demand: `sign_double` decrypts the signing
 seeds into arena-backed handles (`ArenaByte32`) in locked memory for the
 call and drops them after; the seeds never leave the manager. The `raw`
@@ -1019,7 +1025,7 @@ verified on `x86_64-unknown-linux-gnu`, `x86_64-pc-windows-msvc`,
 are pulled only where they apply: `libc` under `cfg(unix)`,
 `windows-sys` under `cfg(windows)`.
 
-Cargo features (both off by default):
+Cargo features (all off by default):
 
 - `insecure-plaintext-mk`: enables `InsecurePlaintextMkProvider` and
   `KeyManager::start_plain`, which store the master key in cleartext.
@@ -1028,6 +1034,11 @@ Cargo features (both off by default):
   bare `sign::raw` sign/verify, and `KeyManager::with_signing_seeds`).
   Opt in only if you manage the invariants (nonce uniqueness,
   both-branch verification, seed confinement) yourself.
+- `best-effort`: enables the opt-outs for platforms that cannot meet the
+  strict guarantee - `KeyManager::start_best_effort` (arena on swappable
+  memory) and `KeyManagerConfig::file_lock_best_effort` (start without the
+  store lock where advisory locking is unsupported, e.g. Android). Both
+  report the degraded state through a callback.
 - `fuzzing`: test-only hooks for the fuzz targets under `fuzz/`.
 
 ---

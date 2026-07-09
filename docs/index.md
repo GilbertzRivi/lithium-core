@@ -52,17 +52,18 @@ separation are implemented faithfully.
 
 - Dependencies are pinned in `Cargo.lock`; the toolchain is pinned 
   in `rust-toolchain.toml` (`1.96.0`).
-- Known-answer vectors (KAT): `tests/golden_tests.rs` (6 tests) on 
+- Known-answer vectors (KAT): `tests/golden_tests.rs` (5 tests) on 
   data in `tests/testdata/` (`kyberbox_golden_v1`, 
   `mldsa87_verify_golden_v1`, `hpke_golden_v1`).
-- Public API tests: `crypto_tests` (85), `hpke_tests` (46), 
-  `hpke_stream_tests` (6), `double_sig_tests` (16), `secret_tests` (75), 
-  `password_tests` (7), `opaque_tests` (13), `store_tests` (15), and the 
-  `keymanager_*` suites (16).
-- Fuzzing: 11 `cargo-fuzz` targets on the surfaces that parse 
+- Public API tests: `crypto_tests` (66), `hpke_tests` (46), 
+  `hpke_stream_tests` (6), `secret_tests` (75), `password_tests` (7), 
+  `opaque_tests` (13), `store_tests` (15), and the `keymanager_*` suites 
+  (15, or 16 with `best-effort`).
+- Fuzzing: 14 `cargo-fuzz` targets on the surfaces that parse 
   untrusted input (`keyfile_parse`, `secret_json`, `opaque_parse`, 
   `kyberbox_decrypt`, `aead_decrypt`, `sign_verify`, `hpke_open`, 
-  `hpke_setup_receiver`, `hpke_wire`, `hpke_stream`, `double_sig`). 
+  `hpke_setup_receiver`, `hpke_wire`, `hpke_stream`, `double_sig`, 
+  `dual_open`, `dual_verify`, `dual_wire`). 
   `fuzz/smoke.sh` runs every target in parallel for a 
   fixed wall-clock budget (a quick regression sweep, not a deep 
   campaign):

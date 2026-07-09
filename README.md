@@ -30,6 +30,12 @@ password-backed, hardware-backed, TPM-backed, or application-specific sealing (s
 
 Secret types (`SecByte32`, `SecretBytes`, `MasterKey32`, ...) zeroize on drop.
 
+By default `KeyManager` is fail-closed: it takes an exclusive lock on the store directory and locks
+its key material into RAM, refusing to start if either cannot be done. The non-default `best-effort`
+feature relaxes each for platforms that cannot honor them (e.g. Android, where `flock` is
+unsupported), proceeding on swappable memory or without the store lock and reporting the degraded
+state through a callback. A live second writer on the same store is still rejected.
+
 ### 2. Hybrid encryption (`crypto`)
 
 `crypto::kyberbox` is the X25519 + ML-KEM-1024 AEAD construction: the KEM produces a fresh

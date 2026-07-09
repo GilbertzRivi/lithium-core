@@ -103,9 +103,27 @@ pub enum RotationErrorPolicy {
     Callback(Box<dyn Fn(&LithiumError) + Send + Sync>),
 }
 
+#[derive(Clone)]
+pub enum FileLockPolicy {
+    Require,
+    #[cfg(feature = "best-effort")]
+    BestEffort(Arc<dyn Fn(&LithiumError) + Send + Sync>),
+}
+
+impl std::fmt::Debug for FileLockPolicy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FileLockPolicy::Require => f.write_str("Require"),
+            #[cfg(feature = "best-effort")]
+            FileLockPolicy::BestEffort(_) => f.write_str("BestEffort(..)"),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct KeyManagerConfig {
     locking: MemoryLocking,
+    file_lock: FileLockPolicy,
     public_cache_policy: PublicCachePolicy,
     rotate_every: Duration,
     rotation_enabled: bool,
@@ -120,11 +138,21 @@ impl KeyManagerConfig {
     pub fn new(locking: MemoryLocking, public_cache_policy: PublicCachePolicy) -> Self {
         Self {
             locking,
+            file_lock: FileLockPolicy::Require,
             public_cache_policy,
             rotate_every: Self::DEFAULT_ROTATE_EVERY,
             rotation_enabled: true,
             arena_capacity: Self::DEFAULT_ARENA_CAPACITY,
         }
+    }
+
+    #[cfg(feature = "best-effort")]
+    pub fn file_lock_best_effort(
+        mut self,
+        on_unlocked: impl Fn(&LithiumError) + Send + Sync + 'static,
+    ) -> Self {
+        self.file_lock = FileLockPolicy::BestEffort(Arc::new(on_unlocked));
+        self
     }
 
     pub fn rotate_every(mut self, interval: Duration) -> Self {
@@ -167,7 +195,7 @@ struct Shared<P: MkProvider> {
     poisoned: AtomicBool,
     ctl: Mutex<WorkerCtl>,
     signal: Condvar,
-    _lock_file: fs::File,
+    _lock_file: Option<fs::File>,
 }
 
 struct RotationGuard<P: MkProvider> {
@@ -210,7 +238,7 @@ struct RewrapTarget {
     key_type: String,
 }
 
-fn acquire_exclusive_lock(root_dir: &Path) -> Result<fs::File> {
+fn acquire_exclusive_lock(root_dir: &Path, policy: &FileLockPolicy) -> Result<Option<fs::File>> {
     let file = fs::OpenOptions::new()
         .create(true)
         .write(true)
@@ -218,9 +246,16 @@ fn acquire_exclusive_lock(root_dir: &Path) -> Result<fs::File> {
         .open(root_dir.join(LOCK_FILE))
         .map_err(LithiumError::io)?;
     match file.try_lock() {
-        Ok(()) => Ok(file),
+        Ok(()) => Ok(Some(file)),
         Err(fs::TryLockError::WouldBlock) => Err(LithiumError::keystore_locked()),
-        Err(fs::TryLockError::Error(e)) => Err(LithiumError::io(e)),
+        Err(fs::TryLockError::Error(e)) => match policy {
+            FileLockPolicy::Require => Err(LithiumError::io(e)),
+            #[cfg(feature = "best-effort")]
+            FileLockPolicy::BestEffort(on_unlocked) => {
+                on_unlocked(&LithiumError::io(e));
+                Ok(None)
+            }
+        },
     }
 }
 
@@ -738,6 +773,7 @@ impl<P: MkProvider + Send + Sync + 'static> KeyManager<P> {
         )
     }
 
+    #[cfg(feature = "best-effort")]
     pub fn start_best_effort(
         base_dir: &Path,
         mk_provider: P,
@@ -760,6 +796,7 @@ impl<P: MkProvider + Send + Sync + 'static> KeyManager<P> {
     ) -> Result<Self> {
         let KeyManagerConfig {
             locking,
+            file_lock,
             public_cache_policy,
             rotate_every,
             rotation_enabled,
@@ -779,7 +816,7 @@ impl<P: MkProvider + Send + Sync + 'static> KeyManager<P> {
         keyfile::ensure_private_dir(&priv_dir)?;
         keyfile::ensure_private_dir(&secrets_dir)?;
 
-        let lock_file = acquire_exclusive_lock(&root_dir)?;
+        let lock_file = acquire_exclusive_lock(&root_dir, &file_lock)?;
 
         match mk_provider.load_mk() {
             Ok(_) => {}

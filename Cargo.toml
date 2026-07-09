@@ -16,6 +16,8 @@ insecure-plaintext-mk = []
 raw = []
 # Allow disabling master-key rotation (KeyManagerConfig::never_rotate). Off by default. Opt in only when the MK is derived deterministically from a hardware-backed key (e.g. TEE/Keystore) and never persists in raw form, so there is nothing to rotate.
 no-mk-rotation = []
+# Allow best-effort escape hatches (KeyManager::start_best_effort, KeyManagerConfig::file_lock_best_effort). Off by default. Opt in only on platforms where the strict guarantee cannot be met (e.g. a filesystem without advisory locks); the app is then responsible for the reported degradation.
+best-effort = []
 
 [dependencies]
 ed25519-dalek = { version = "3.0.0", features = ["zeroize"] }

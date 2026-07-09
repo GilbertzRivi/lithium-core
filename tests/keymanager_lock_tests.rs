@@ -43,6 +43,51 @@ fn second_instance_on_same_store_is_rejected() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+#[cfg(feature = "best-effort")]
+#[test]
+fn best_effort_still_rejects_a_live_second_instance() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use lithium_core::keys::{KeyManagerConfig, MemoryLocking};
+
+    let dir = tmp_dir("best-effort");
+    std::fs::remove_dir_all(&dir).ok();
+
+    let km1 = start(&dir).unwrap();
+
+    let reported = Arc::new(AtomicUsize::new(0));
+    let sink = reported.clone();
+    let config =
+        KeyManagerConfig::new(MemoryLocking::Require, PublicCachePolicy::RepairMissingOnly)
+            .file_lock_best_effort(move |_| {
+                sink.fetch_add(1, Ordering::SeqCst);
+            });
+
+    match KeyManager::start_with_config(
+        &dir,
+        FileMk {
+            path: dir.join("mk"),
+        },
+        config,
+        RotationErrorPolicy::Callback(Box::new(|_| {})),
+    ) {
+        Err(e) => assert!(
+            matches!(e.kind, ErrorKind::KeystoreLocked),
+            "best-effort must not bypass a live holder, got {e:?}"
+        ),
+        Ok(_) => panic!("two writers on one store must never coexist"),
+    }
+    assert_eq!(
+        reported.load(Ordering::SeqCst),
+        0,
+        "callback fires only when locking is unsupported, not on contention"
+    );
+
+    drop(km1);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 #[test]
 fn different_kinds_do_not_contend() {
     let dir = tmp_dir("kinds");
