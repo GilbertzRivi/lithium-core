@@ -50,7 +50,7 @@ pub trait MkProvider {
         label: &[u8],
         secrets_dir: &Path,
     ) -> Result<SecByte32> {
-        load_or_create_label_secret32(secrets_dir, mk, label)
+        load_or_create_label_secret32(secrets_dir, mk, label, CreateNewMode::LinkNoReplace)
     }
 }
 
@@ -120,6 +120,14 @@ impl std::fmt::Debug for FileLockPolicy {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+enum CreateNewMode {
+    #[default]
+    LinkNoReplace,
+    #[cfg(feature = "best-effort")]
+    RenameBestEffort,
+}
+
 #[derive(Clone, Debug)]
 pub struct KeyManagerConfig {
     locking: MemoryLocking,
@@ -128,6 +136,7 @@ pub struct KeyManagerConfig {
     rotate_every: Duration,
     rotation_enabled: bool,
     arena_capacity: usize,
+    create_new_mode: CreateNewMode,
 }
 
 impl KeyManagerConfig {
@@ -143,7 +152,14 @@ impl KeyManagerConfig {
             rotate_every: Self::DEFAULT_ROTATE_EVERY,
             rotation_enabled: true,
             arena_capacity: Self::DEFAULT_ARENA_CAPACITY,
+            create_new_mode: CreateNewMode::LinkNoReplace,
         }
+    }
+
+    #[cfg(feature = "best-effort")]
+    pub fn create_new_rename_best_effort(mut self) -> Self {
+        self.create_new_mode = CreateNewMode::RenameBestEffort;
+        self
     }
 
     #[cfg(feature = "best-effort")]
@@ -190,6 +206,7 @@ struct Shared<P: MkProvider> {
     mk_provider: P,
     arena: SecretArena,
     public_cache_policy: PublicCachePolicy,
+    create_new_mode: CreateNewMode,
     keys: RwLock<PublicKeys>,
     error_policy: RotationErrorPolicy,
     poisoned: AtomicBool,
@@ -386,6 +403,7 @@ fn load_or_create_label_secret32(
     secrets_dir: &Path,
     mk: &MasterKey32,
     label: &[u8],
+    mode: CreateNewMode,
 ) -> Result<SecByte32> {
     validate_secret_label(label)?;
     let path = label_secret_path(secrets_dir, label);
@@ -396,7 +414,16 @@ fn load_or_create_label_secret32(
     }
 
     let v = keys::random_32()?;
-    match keyfile::save_secret32_encrypted_new(&path, mk, &v, &key_type) {
+    let save_res = match mode {
+        CreateNewMode::LinkNoReplace => {
+            keyfile::save_secret32_encrypted_new(&path, mk, &v, &key_type)
+        }
+        #[cfg(feature = "best-effort")]
+        CreateNewMode::RenameBestEffort => {
+            keyfile::save_secret32_encrypted_new_best_effort(&path, mk, &v, &key_type)
+        }
+    };
+    match save_res {
         Ok(()) => Ok(v),
         Err(e) if e.is_already_exists() => keyfile::load_secret32_decrypted(&path, mk, &key_type),
         Err(e) => Err(e),
@@ -408,6 +435,7 @@ fn load_or_create_label_bytes(
     mk: &MasterKey32,
     label: &[u8],
     generate: impl FnOnce() -> Result<SecretBytes>,
+    mode: CreateNewMode,
 ) -> Result<SecretBytes> {
     validate_secret_label(label)?;
     let path = label_secret_path(secrets_dir, label);
@@ -418,7 +446,16 @@ fn load_or_create_label_bytes(
     }
 
     let v = generate()?;
-    match keyfile::save_bytes_encrypted_new(&path, mk, v.expose_as_slice(), &key_type) {
+    let save_res = match mode {
+        CreateNewMode::LinkNoReplace => {
+            keyfile::save_bytes_encrypted_new(&path, mk, v.expose_as_slice(), &key_type)
+        }
+        #[cfg(feature = "best-effort")]
+        CreateNewMode::RenameBestEffort => {
+            keyfile::save_bytes_encrypted_new_best_effort(&path, mk, v.expose_as_slice(), &key_type)
+        }
+    };
+    match save_res {
         Ok(()) => Ok(v),
         Err(e) if e.is_already_exists() => keyfile::load_bytes_decrypted(&path, mk, &key_type),
         Err(e) => Err(e),
@@ -801,6 +838,7 @@ impl<P: MkProvider + Send + Sync + 'static> KeyManager<P> {
             rotate_every,
             rotation_enabled,
             arena_capacity,
+            create_new_mode,
         } = config;
         if rotation_enabled && rotate_every < KeyManagerConfig::MIN_ROTATE_EVERY {
             return Err(LithiumError::malformed_input("rotate_every_too_small"));
@@ -856,6 +894,7 @@ impl<P: MkProvider + Send + Sync + 'static> KeyManager<P> {
             mk_provider,
             arena,
             public_cache_policy,
+            create_new_mode,
             keys: RwLock::new(public_keys),
             error_policy: rotation_error_policy,
             poisoned: AtomicBool::new(false),
@@ -966,9 +1005,20 @@ impl<P: MkProvider + Send + Sync + 'static> KeyManager<P> {
     pub fn get_or_create_secret32(&self, label: &[u8]) -> Result<SecByte32> {
         let _gate = self.shared.read_gate()?;
         let root_mk = self.shared.mk_provider.load_mk()?;
-        self.shared
-            .mk_provider
-            .get_or_create_secret32(&root_mk, label, &self.shared.secrets_dir)
+        match self.shared.create_new_mode {
+            CreateNewMode::LinkNoReplace => self.shared.mk_provider.get_or_create_secret32(
+                &root_mk,
+                label,
+                &self.shared.secrets_dir,
+            ),
+            #[cfg(feature = "best-effort")]
+            CreateNewMode::RenameBestEffort => load_or_create_label_secret32(
+                &self.shared.secrets_dir,
+                &root_mk,
+                label,
+                CreateNewMode::RenameBestEffort,
+            ),
+        }
     }
 
     pub fn encrypt_with_label(
@@ -1004,7 +1054,13 @@ impl<P: MkProvider + Send + Sync + 'static> KeyManager<P> {
     ) -> Result<SecretBytes> {
         let _gate = self.shared.read_gate()?;
         let root_mk = self.shared.mk_provider.load_mk()?;
-        load_or_create_label_bytes(&self.shared.secrets_dir, &root_mk, label, generate)
+        load_or_create_label_bytes(
+            &self.shared.secrets_dir,
+            &root_mk,
+            label,
+            generate,
+            self.shared.create_new_mode,
+        )
     }
 
     fn signing_seeds<R>(&self, f: impl FnOnce(ArenaByte32, ArenaByte32) -> Result<R>) -> Result<R> {

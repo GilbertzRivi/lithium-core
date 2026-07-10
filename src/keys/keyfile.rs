@@ -212,6 +212,55 @@ pub fn write_secure_new(path: &Path, data: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// Best-effort create-only write that swaps the tmp file in via `rename`
+/// instead of `hard_link`. Some Android/SELinux policies deny `link(2)` on the
+/// keystore directory, which breaks [`write_secure_new`]; `rename(2)` is
+/// permitted there. Unlike `hard_link`, `rename` cannot atomically refuse to
+/// clobber an existing file, so this pre-checks the path and otherwise relies
+/// on the KeyManager single-writer lock for exclusion. The pre-check races with
+/// a concurrent writer that lacks the lock. Opt in only where `link` is
+/// unavailable.
+#[cfg(feature = "best-effort")]
+pub fn write_secure_new_best_effort(path: &Path, data: &[u8]) -> Result<()> {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        ensure_private_dir(parent)?;
+    }
+
+    if path.try_exists().map_err(LithiumError::io)? {
+        return Err(LithiumError::io(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "keyfile already exists",
+        )));
+    }
+
+    let (mut f, tmp) = create_private_tmp(path)?;
+
+    let write_res = (|| -> Result<()> {
+        f.write_all(data).map_err(LithiumError::io)?;
+        f.sync_all().map_err(LithiumError::io)?;
+        Ok(())
+    })();
+
+    if let Err(e) = write_res {
+        let _ = fs::remove_file(&tmp);
+        return Err(e);
+    }
+
+    if let Err(e) = fs::rename(&tmp, path) {
+        let _ = fs::remove_file(&tmp);
+        return Err(LithiumError::io(e));
+    }
+
+    #[cfg(unix)]
+    if let Some(parent) = path.parent() {
+        let _ = fs::File::open(parent).and_then(|dir| dir.sync_all());
+    }
+
+    Ok(())
+}
+
 #[inline]
 fn aad_for(version: u8, key_type: &str) -> Vec<u8> {
     format!("keyfile:v{}|{}", version, key_type).into_bytes()
@@ -472,6 +521,29 @@ pub fn save_bytes_encrypted_new(
     write_secure_new(path, &encode_encrypted(mk, payload, key_type)?)
 }
 
+#[cfg(feature = "best-effort")]
+pub fn save_secret32_encrypted_new_best_effort(
+    path: &Path,
+    mk: &MasterKey32,
+    payload: &SecretFixedBytes<32>,
+    key_type: &str,
+) -> Result<()> {
+    write_secure_new_best_effort(
+        path,
+        &encode_encrypted(mk, payload.expose_as_slice(), key_type)?,
+    )
+}
+
+#[cfg(feature = "best-effort")]
+pub fn save_bytes_encrypted_new_best_effort(
+    path: &Path,
+    mk: &MasterKey32,
+    payload: &[u8],
+    key_type: &str,
+) -> Result<()> {
+    write_secure_new_best_effort(path, &encode_encrypted(mk, payload, key_type)?)
+}
+
 pub fn load_secret32_decrypted(
     path: &Path,
     mk: &MasterKey32,
@@ -685,6 +757,44 @@ mod tests {
             read_keyfile_bytes(&path).unwrap().expose_as_slice(),
             b"top secret payload"
         );
+        assert!(
+            fs::read_dir(&dir)
+                .unwrap()
+                .all(|e| { e.unwrap().file_name().to_string_lossy() == "secret.keyf" }),
+            "no leftover tmp files"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(all(unix, feature = "best-effort"))]
+    #[test]
+    fn write_secure_new_best_effort_is_create_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join(format!("lithium-be-rename-{}", std::process::id()));
+        let path = dir.join("secret.keyf");
+        let _ = fs::remove_dir_all(&dir);
+
+        write_secure_new_best_effort(&path, b"first").unwrap();
+
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        assert_eq!(
+            read_keyfile_bytes(&path).unwrap().expose_as_slice(),
+            b"first"
+        );
+
+        let err = write_secure_new_best_effort(&path, b"second").unwrap_err();
+        assert!(
+            err.is_already_exists(),
+            "must refuse to clobber existing keyfile"
+        );
+        assert_eq!(
+            read_keyfile_bytes(&path).unwrap().expose_as_slice(),
+            b"first"
+        );
+
         assert!(
             fs::read_dir(&dir)
                 .unwrap()
