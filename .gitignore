@@ -7,3 +7,5 @@
 *secret*.asc
 *-secret.asc
 *revoke*.asc
+
+check.sh

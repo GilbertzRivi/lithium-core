@@ -201,3 +201,5 @@ impl MkProvider for TpmMkProvider {
 ```
 
 Note: `read_blob` returns not-found only for a genuinely missing file (the `std::fs::read` error), which is what tells `KeyManager` to generate a fresh MK and call `store_mk`; a present-but-corrupt blob is a hard error.
+
+By default `KeyManager` calls `load_mk` on every operation that needs the MK, so this provider unseals against the TPM once per operation. The non-default `cached-mk` feature unseals once at `start` and after each rotation and derives from a copy held in the locked arena, trading one TPM round-trip per operation for keeping the MK resident in locked memory.

@@ -439,7 +439,7 @@ dropped.
 pub trait MkProvider {
     fn load_mk(&self) -> Result<SecByte32>;
     fn store_mk(&self, mk: &SecByte32) -> Result<()>;
-    fn get_or_create_secret32(&self, mk: &SecByte32, label: &[u8], secrets_dir: &Path) -> Result<SecByte32>;
+    fn get_or_create_secret32(&self, mk: &[u8], label: &[u8], secrets_dir: &Path) -> Result<SecByte32>;
 }
 ```
 
@@ -450,6 +450,15 @@ provider is `InsecurePlaintextMkProvider`, which stores the MK in cleartext
 and is gated behind the non-default `insecure-plaintext-mk` feature so it
 cannot ship to production by accident; `start_plain` and the type only exist
 with that feature.
+
+By default every operation that needs the MK calls `load_mk` on the provider,
+so a sealing provider unseals once per operation. Under the non-default
+`cached-mk` feature the manager unseals once at `start` and again after each
+rotation, holds the MK in the locked arena for the process lifetime, and
+derives from that copy per operation; `load_mk` is then touched only at load
+and rotation. `store_mk` is unaffected. Opt in when the unseal round-trip
+(e.g. a TPM) is the cost you want to avoid, at the price of keeping the MK
+resident in locked memory.
 
 **API:**
 

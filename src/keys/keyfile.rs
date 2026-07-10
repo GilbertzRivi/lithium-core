@@ -12,7 +12,7 @@ use sha2::Sha256;
 use crate::crypto::{aead, keys};
 use crate::error::{LithiumError, Result};
 use crate::public::PublicBytes;
-use crate::secrets::{MasterKey32, SecByte12, SecByte32, SecretBytes, SecretFixedBytes};
+use crate::secrets::{SecByte12, SecByte32, SecretBytes, SecretFixedBytes};
 
 const KEYFILE_MAGIC: &[u8; 4] = b"KEYF";
 const KEYFILE_VERSION: u8 = 1;
@@ -267,8 +267,8 @@ fn aad_for(version: u8, key_type: &str) -> Vec<u8> {
 }
 
 #[inline]
-fn derive_kek(mk: &MasterKey32, salt: &[u8; 32]) -> Result<SecByte32> {
-    let hk = Hkdf::<Sha256>::new(Some(salt), mk.expose_as_slice());
+fn derive_kek(mk: &[u8], salt: &[u8; 32]) -> Result<SecByte32> {
+    let hk = Hkdf::<Sha256>::new(Some(salt), mk);
     let mut out = SecByte32::new_zeroed();
     hk.expand(KEYFILE_KEK_INFO, out.expose_as_mut_slice())?;
     Ok(out)
@@ -426,7 +426,7 @@ pub fn parse_keyfile_fuzz(
 }
 
 fn unwrap_dek(
-    mk: &MasterKey32,
+    mk: &[u8],
     salt: &[u8; 32],
     nonce_wrap: &[u8; 12],
     ct_wrap: &[u8],
@@ -458,7 +458,7 @@ fn decrypt_payload_32(
     SecretFixedBytes::<32>::from_slice(pt.expose_as_slice())
 }
 
-fn encode_encrypted(mk: &MasterKey32, payload: &[u8], key_type: &str) -> Result<Vec<u8>> {
+fn encode_encrypted(mk: &[u8], payload: &[u8], key_type: &str) -> Result<Vec<u8>> {
     let dek = keys::random_fixed::<32>()?;
     let salt = keys::random_fixed::<32>()?;
     let kek = derive_kek(mk, salt.expose_as_array())?;
@@ -481,7 +481,7 @@ fn encode_encrypted(mk: &MasterKey32, payload: &[u8], key_type: &str) -> Result<
 
 pub fn save_secret32_encrypted(
     path: &Path,
-    mk: &MasterKey32,
+    mk: &[u8],
     payload: &SecretFixedBytes<32>,
     key_type: &str,
 ) -> Result<()> {
@@ -493,7 +493,7 @@ pub fn save_secret32_encrypted(
 
 pub fn save_secret32_encrypted_new(
     path: &Path,
-    mk: &MasterKey32,
+    mk: &[u8],
     payload: &SecretFixedBytes<32>,
     key_type: &str,
 ) -> Result<()> {
@@ -503,18 +503,13 @@ pub fn save_secret32_encrypted_new(
     )
 }
 
-pub fn save_bytes_encrypted(
-    path: &Path,
-    mk: &MasterKey32,
-    payload: &[u8],
-    key_type: &str,
-) -> Result<()> {
+pub fn save_bytes_encrypted(path: &Path, mk: &[u8], payload: &[u8], key_type: &str) -> Result<()> {
     write_secure(path, &encode_encrypted(mk, payload, key_type)?)
 }
 
 pub fn save_bytes_encrypted_new(
     path: &Path,
-    mk: &MasterKey32,
+    mk: &[u8],
     payload: &[u8],
     key_type: &str,
 ) -> Result<()> {
@@ -524,7 +519,7 @@ pub fn save_bytes_encrypted_new(
 #[cfg(feature = "best-effort")]
 pub fn save_secret32_encrypted_new_best_effort(
     path: &Path,
-    mk: &MasterKey32,
+    mk: &[u8],
     payload: &SecretFixedBytes<32>,
     key_type: &str,
 ) -> Result<()> {
@@ -537,7 +532,7 @@ pub fn save_secret32_encrypted_new_best_effort(
 #[cfg(feature = "best-effort")]
 pub fn save_bytes_encrypted_new_best_effort(
     path: &Path,
-    mk: &MasterKey32,
+    mk: &[u8],
     payload: &[u8],
     key_type: &str,
 ) -> Result<()> {
@@ -546,7 +541,7 @@ pub fn save_bytes_encrypted_new_best_effort(
 
 pub fn load_secret32_decrypted(
     path: &Path,
-    mk: &MasterKey32,
+    mk: &[u8],
     key_type: &str,
 ) -> Result<SecretFixedBytes<32>> {
     let buf = read_keyfile_bytes(path)?;
@@ -562,7 +557,7 @@ pub fn load_secret32_decrypted(
     decrypt_payload_32(&dek, &nonce_payload, &ct_payload, &aad)
 }
 
-pub fn load_bytes_decrypted(path: &Path, mk: &MasterKey32, key_type: &str) -> Result<SecretBytes> {
+pub fn load_bytes_decrypted(path: &Path, mk: &[u8], key_type: &str) -> Result<SecretBytes> {
     let buf = read_keyfile_bytes(path)?;
     let (version, alg_id, dek_len, salt, nonce_wrap, ct_wrap, nonce_payload, ct_payload) =
         parse_keyfile(&buf)?;
@@ -578,8 +573,8 @@ pub fn load_bytes_decrypted(path: &Path, mk: &MasterKey32, key_type: &str) -> Re
 
 pub fn rewrap_keyfile_dek_to_bytes(
     path: &Path,
-    old_mk: &MasterKey32,
-    new_mk: &MasterKey32,
+    old_mk: &[u8],
+    new_mk: &[u8],
     key_type: &str,
 ) -> Result<SecretBytes> {
     let buf = read_keyfile_bytes(path)?;
@@ -619,12 +614,7 @@ pub fn rewrap_keyfile_dek_to_bytes(
     Ok(SecretBytes::new(out))
 }
 
-pub fn rewrap_keyfile_dek(
-    path: &Path,
-    old_mk: &MasterKey32,
-    new_mk: &MasterKey32,
-    key_type: &str,
-) -> Result<()> {
+pub fn rewrap_keyfile_dek(path: &Path, old_mk: &[u8], new_mk: &[u8], key_type: &str) -> Result<()> {
     let out = rewrap_keyfile_dek_to_bytes(path, old_mk, new_mk, key_type)?;
     write_secure(path, out.expose_as_slice())
 }

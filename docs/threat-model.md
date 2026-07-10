@@ -166,7 +166,10 @@ unlocked, swappable page.
   derived via `from_seed`. Private keys are load-on-demand:
   `sign_double` decrypts the signing seeds into arena-backed handles for
   the call and drops them after (the `raw` feature reopens the same path
-  as the `with_signing_seeds` callback).
+  as the `with_signing_seeds` callback). The MK itself is fetched from the
+  provider per operation by default, so it only transits the heap for the
+  call; the non-default `cached-mk` feature instead keeps it arena-resident
+  for the process lifetime, unsealed once at startup and after each rotation.
 - **`secrets::harden_process()`** is opt-in - the embedder calls it;
   the library never sets process-global state implicitly. On
   Linux/Android it applies `PR_SET_DUMPABLE 0` and on Unix it sets

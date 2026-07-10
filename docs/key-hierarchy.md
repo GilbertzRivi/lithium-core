@@ -48,7 +48,10 @@ of the MK are the caller's choice:
   hardware-backed, TPM-backed, or other sealing and passes it to
   `KeyManager::start`. See `examples/password_mkprovider.rs` and
   [`mkprovider-examples.md`](mkprovider-examples.md).
-* The library only accesses the MK through `load_mk` and `store_mk`.
+* The library only accesses the MK through `load_mk` and `store_mk`. By
+  default it calls `load_mk` once per operation that needs the MK; the
+  non-default `cached-mk` feature instead unseals once at `start` and after
+  each rotation and keeps the MK in the locked arena for the process lifetime.
 
 Example caller-side wrapping strategy:
 

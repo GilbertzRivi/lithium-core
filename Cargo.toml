@@ -18,6 +18,8 @@ raw = []
 no-mk-rotation = []
 # Allow best-effort escape hatches (KeyManager::start_best_effort, KeyManagerConfig::file_lock_best_effort). Off by default. Opt in only on platforms where the strict guarantee cannot be met (e.g. a filesystem without advisory locks); the app is then responsible for the reported degradation.
 best-effort = []
+# Cache the unsealed master key in the mlock'd arena for the process lifetime (unsealed once at load and on rotation) instead of calling the provider per operation. Off by default: without it every operation loads the MK from the provider. Opt in with a sealing provider (e.g. TPM) to avoid an unseal round-trip per operation.
+cached-mk = []
 
 [dependencies]
 ed25519-dalek = { version = "3.0.0", features = ["zeroize"] }

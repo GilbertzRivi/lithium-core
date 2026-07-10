@@ -27,6 +27,8 @@ automatically on a background thread. The only built-in provider stores the MK i
 behind the non-default `insecure-plaintext-mk` feature (dev/tests only); production callers supply
 password-backed, hardware-backed, TPM-backed, or application-specific sealing (see
 `examples/password_mkprovider.rs` and [`docs/mkprovider-examples.md`](docs/mkprovider-examples.md)).
+The MK is loaded from the provider once per operation by default; the non-default `cached-mk` feature
+unseals it once at startup and after each rotation and keeps it in the locked arena instead.
 
 Secret types (`SecByte32`, `SecretBytes`, `MasterKey32`, ...) zeroize on drop.
 

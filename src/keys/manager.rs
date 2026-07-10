@@ -46,7 +46,7 @@ pub trait MkProvider {
 
     fn get_or_create_secret32(
         &self,
-        mk: &SecByte32,
+        mk: &[u8],
         label: &[u8],
         secrets_dir: &Path,
     ) -> Result<SecByte32> {
@@ -205,6 +205,8 @@ struct Shared<P: MkProvider> {
     rotate_dir: PathBuf,
     mk_provider: P,
     arena: SecretArena,
+    #[cfg(feature = "cached-mk")]
+    current_mk: RwLock<ArenaByte32>,
     public_cache_policy: PublicCachePolicy,
     create_new_mode: CreateNewMode,
     keys: RwLock<PublicKeys>,
@@ -336,7 +338,7 @@ fn ensure_seed_keypair<const N: usize, T: AsRef<[u8]>>(
     arena: &SecretArena,
     priv_path: &Path,
     pub_path: &Path,
-    mk: &MasterKey32,
+    mk: &[u8],
     key_type: &'static str,
     policy: PublicCachePolicy,
     pub_from_seed: impl Fn(&ArenaFixedBytes<N>) -> T,
@@ -401,7 +403,7 @@ fn label_secret_path(secrets_dir: &Path, label: &[u8]) -> PathBuf {
 
 fn load_or_create_label_secret32(
     secrets_dir: &Path,
-    mk: &MasterKey32,
+    mk: &[u8],
     label: &[u8],
     mode: CreateNewMode,
 ) -> Result<SecByte32> {
@@ -432,7 +434,7 @@ fn load_or_create_label_secret32(
 
 fn load_or_create_label_bytes(
     secrets_dir: &Path,
-    mk: &MasterKey32,
+    mk: &[u8],
     label: &[u8],
     generate: impl FnOnce() -> Result<SecretBytes>,
     mode: CreateNewMode,
@@ -465,7 +467,7 @@ fn load_or_create_label_bytes(
 fn ensure_asymmetric_material(
     pub_dir: &Path,
     priv_dir: &Path,
-    mk: &MasterKey32,
+    mk: &[u8],
     arena: &SecretArena,
     public_cache_policy: PublicCachePolicy,
 ) -> Result<PublicKeys> {
@@ -599,8 +601,8 @@ fn prepare_staged_files(
     for target in targets {
         let out = keyfile::rewrap_keyfile_dek_to_bytes(
             &target.live_path,
-            old_mk,
-            new_mk,
+            old_mk.expose_as_slice(),
+            new_mk.expose_as_slice(),
             &target.key_type,
         )?;
         let staged_path = stage_target_path(rotate_dir, &target.relative_path);
@@ -640,20 +642,27 @@ fn recover_pending_rotation_if_any<P: MkProvider>(
     let next_new_path = rotate_dir.join(ROTATE_NEXT_NEW_FILE);
 
     let (new_mk, provider_already_switched) = if next_new_path.exists() {
-        match keyfile::load_secret32_decrypted(&next_new_path, &current_mk, KT_ROTATE_NEXT_NEW) {
+        match keyfile::load_secret32_decrypted(
+            &next_new_path,
+            current_mk.expose_as_slice(),
+            KT_ROTATE_NEXT_NEW,
+        ) {
             Ok(candidate) => (candidate, true),
             Err(_) => {
                 let candidate = keyfile::load_secret32_decrypted(
                     &next_old_path,
-                    &current_mk,
+                    current_mk.expose_as_slice(),
                     KT_ROTATE_NEXT_OLD,
                 )?;
                 (candidate, false)
             }
         }
     } else {
-        let candidate =
-            keyfile::load_secret32_decrypted(&next_old_path, &current_mk, KT_ROTATE_NEXT_OLD)?;
+        let candidate = keyfile::load_secret32_decrypted(
+            &next_old_path,
+            current_mk.expose_as_slice(),
+            KT_ROTATE_NEXT_OLD,
+        )?;
         (candidate, false)
     };
 
@@ -682,6 +691,34 @@ impl<P: MkProvider> Shared<P> {
             .map_err(|_| LithiumError::internal("keymanager_gate_poisoned"))
     }
 
+    fn with_current_mk<R>(&self, f: impl FnOnce(&[u8]) -> Result<R>) -> Result<R> {
+        #[cfg(not(feature = "cached-mk"))]
+        {
+            let mk = self.mk_provider.load_mk()?;
+            f(mk.expose_as_slice())
+        }
+        #[cfg(feature = "cached-mk")]
+        {
+            let guard = self
+                .current_mk
+                .read()
+                .map_err(|_| LithiumError::internal("keymanager_mk_cache_poisoned"))?;
+            f(guard.expose_as_slice())
+        }
+    }
+
+    #[cfg(feature = "cached-mk")]
+    fn refresh_current_mk(&self) -> Result<()> {
+        let mk = self.mk_provider.load_mk()?;
+        let cached = self.arena.store_fixed::<32>(mk.expose_as_array())?;
+        let mut guard = self
+            .current_mk
+            .write()
+            .map_err(|_| LithiumError::internal("keymanager_mk_cache_poisoned"))?;
+        *guard = cached;
+        Ok(())
+    }
+
     fn rotate_now(&self) -> Result<()> {
         let _write = self
             .keys
@@ -706,14 +743,30 @@ impl<P: MkProvider> Shared<P> {
 
         let next_old_path = self.rotate_dir.join(ROTATE_NEXT_OLD_FILE);
         let next_new_path = self.rotate_dir.join(ROTATE_NEXT_NEW_FILE);
-        keyfile::save_secret32_encrypted(&next_old_path, &old_mk, &new_mk, KT_ROTATE_NEXT_OLD)?;
-        keyfile::save_secret32_encrypted(&next_new_path, &new_mk, &new_mk, KT_ROTATE_NEXT_NEW)?;
+        keyfile::save_secret32_encrypted(
+            &next_old_path,
+            old_mk.expose_as_slice(),
+            &new_mk,
+            KT_ROTATE_NEXT_OLD,
+        )?;
+        keyfile::save_secret32_encrypted(
+            &next_new_path,
+            new_mk.expose_as_slice(),
+            &new_mk,
+            KT_ROTATE_NEXT_NEW,
+        )?;
         sync_dir(&self.rotate_dir)?;
 
         prepare_staged_files(&self.rotate_dir, &old_mk, &new_mk, &targets)?;
         write_marker(&self.rotate_dir.join(ROTATE_READY_FILE), b"ready")?;
 
-        self.commit_rotation(&targets, &new_mk)
+        self.commit_rotation(&targets, &new_mk)?;
+        #[cfg(feature = "cached-mk")]
+        if let Err(e) = self.refresh_current_mk() {
+            self.poisoned.store(true, Ordering::Release);
+            return Err(e);
+        }
+        Ok(())
     }
 
     fn commit_rotation(&self, targets: &[RewrapTarget], new_mk: &MasterKey32) -> Result<()> {
@@ -879,8 +932,15 @@ impl<P: MkProvider + Send + Sync + 'static> KeyManager<P> {
             MemoryLocking::Require => SecretArena::with_capacity(arena_capacity)?,
             MemoryLocking::BestEffort => SecretArena::with_capacity_best_effort(arena_capacity)?,
         };
-        let public_keys =
-            ensure_asymmetric_material(&pub_dir, &priv_dir, &root_mk, &arena, public_cache_policy)?;
+        let public_keys = ensure_asymmetric_material(
+            &pub_dir,
+            &priv_dir,
+            root_mk.expose_as_slice(),
+            &arena,
+            public_cache_policy,
+        )?;
+        #[cfg(feature = "cached-mk")]
+        let current_mk = arena.store_fixed::<32>(root_mk.expose_as_array())?;
 
         let next_rotation_at = Instant::now()
             .checked_add(rotate_every)
@@ -893,6 +953,8 @@ impl<P: MkProvider + Send + Sync + 'static> KeyManager<P> {
             rotate_dir,
             mk_provider,
             arena,
+            #[cfg(feature = "cached-mk")]
+            current_mk: RwLock::new(current_mk),
             public_cache_policy,
             create_new_mode,
             keys: RwLock::new(public_keys),
@@ -995,7 +1057,7 @@ impl<P: MkProvider + Send + Sync + 'static> KeyManager<P> {
         *guard = ensure_asymmetric_material(
             &self.shared.pub_dir,
             &self.shared.priv_dir,
-            &mk,
+            mk.expose_as_slice(),
             &self.shared.arena,
             self.shared.public_cache_policy,
         )?;
@@ -1004,21 +1066,21 @@ impl<P: MkProvider + Send + Sync + 'static> KeyManager<P> {
 
     pub fn get_or_create_secret32(&self, label: &[u8]) -> Result<SecByte32> {
         let _gate = self.shared.read_gate()?;
-        let root_mk = self.shared.mk_provider.load_mk()?;
-        match self.shared.create_new_mode {
-            CreateNewMode::LinkNoReplace => self.shared.mk_provider.get_or_create_secret32(
-                &root_mk,
-                label,
-                &self.shared.secrets_dir,
-            ),
-            #[cfg(feature = "best-effort")]
-            CreateNewMode::RenameBestEffort => load_or_create_label_secret32(
-                &self.shared.secrets_dir,
-                &root_mk,
-                label,
-                CreateNewMode::RenameBestEffort,
-            ),
-        }
+        self.shared
+            .with_current_mk(|mk| match self.shared.create_new_mode {
+                CreateNewMode::LinkNoReplace => self.shared.mk_provider.get_or_create_secret32(
+                    mk,
+                    label,
+                    &self.shared.secrets_dir,
+                ),
+                #[cfg(feature = "best-effort")]
+                CreateNewMode::RenameBestEffort => load_or_create_label_secret32(
+                    &self.shared.secrets_dir,
+                    mk,
+                    label,
+                    CreateNewMode::RenameBestEffort,
+                ),
+            })
     }
 
     pub fn encrypt_with_label(
@@ -1053,39 +1115,41 @@ impl<P: MkProvider + Send + Sync + 'static> KeyManager<P> {
         generate: impl FnOnce() -> Result<SecretBytes>,
     ) -> Result<SecretBytes> {
         let _gate = self.shared.read_gate()?;
-        let root_mk = self.shared.mk_provider.load_mk()?;
-        load_or_create_label_bytes(
-            &self.shared.secrets_dir,
-            &root_mk,
-            label,
-            generate,
-            self.shared.create_new_mode,
-        )
+        self.shared.with_current_mk(|mk| {
+            load_or_create_label_bytes(
+                &self.shared.secrets_dir,
+                mk,
+                label,
+                generate,
+                self.shared.create_new_mode,
+            )
+        })
     }
 
     fn signing_seeds<R>(&self, f: impl FnOnce(ArenaByte32, ArenaByte32) -> Result<R>) -> Result<R> {
         let (ed_locked, dili_locked) = {
             let _gate = self.shared.read_gate()?;
-            let mk = self.shared.mk_provider.load_mk()?;
-            let ed_seed = keyfile::load_secret32_decrypted(
-                &self.shared.priv_dir.join(ED_PRIV),
-                &mk,
-                KT_ED_SEED,
-            )?;
-            let dili_seed = keyfile::load_bytes_decrypted(
-                &self.shared.priv_dir.join(DILI_PRIV),
-                &mk,
-                KT_DILI_SEED,
-            )?;
-            let ed_locked = self
-                .shared
-                .arena
-                .store_fixed::<32>(ed_seed.expose_as_array())?;
-            let dili_locked = self
-                .shared
-                .arena
-                .store_slice_fixed::<32>(dili_seed.expose_as_slice())?;
-            (ed_locked, dili_locked)
+            self.shared.with_current_mk(|mk| {
+                let ed_seed = keyfile::load_secret32_decrypted(
+                    &self.shared.priv_dir.join(ED_PRIV),
+                    mk,
+                    KT_ED_SEED,
+                )?;
+                let dili_seed = keyfile::load_bytes_decrypted(
+                    &self.shared.priv_dir.join(DILI_PRIV),
+                    mk,
+                    KT_DILI_SEED,
+                )?;
+                let ed_locked = self
+                    .shared
+                    .arena
+                    .store_fixed::<32>(ed_seed.expose_as_array())?;
+                let dili_locked = self
+                    .shared
+                    .arena
+                    .store_slice_fixed::<32>(dili_seed.expose_as_slice())?;
+                Ok((ed_locked, dili_locked))
+            })?
         };
         f(ed_locked, dili_locked)
     }
